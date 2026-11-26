@@ -27,13 +27,14 @@ function setup(
   const mainFrame = { url: pageURL } as WebFrameMain;
   const handlers = new Map<string, IpcHandler>();
   const register = Sinon.spy();
+  const on = Sinon.stub();
   const window = {
     webContents: {
       mainFrame,
       isDestroyed: () => false,
       ipc: { handle: (channel: string, handler: IpcHandler) => handlers.set(channel, handler) },
       session: { setDisplayMediaRequestHandler: register },
-      on: Sinon.stub(),
+      on,
       once: Sinon.stub(),
     },
   } as unknown as BrowserWindow;
@@ -56,10 +57,19 @@ function setup(
     displayHandler(request, respond);
     return respond.firstCall.args[0];
   };
+  const navigate = (details: { isMainFrame: boolean; isSameDocument: boolean }) => {
+    for (const call of on.getCalls()) {
+      if (call.args[0] === 'did-start-navigation') {
+        call.args[1](details);
+      }
+    }
+  };
   return {
+    mainFrame,
     request,
     displayHandler,
     requestDisplay,
+    navigate,
     listSources: () => handlers.get('get-screen-share-sources')!(event),
     pick: (id: string | null) => handlers.get('set-screen-share-source')!(event, id),
   };
@@ -146,6 +156,75 @@ describe('screen share picker', () => {
 
     assert.strictEqual(listed.screenAccess, 'denied');
     assert.isEmpty(listed.sources);
+  });
+
+  it('clears the selection when the main frame navigates to another document', async () => {
+    const picker = setup();
+    await picker.listSources();
+    assert.isTrue(await picker.pick('screen:1'));
+
+    picker.navigate({ isMainFrame: true, isSameDocument: false });
+
+    assert.isNull(picker.requestDisplay());
+  });
+
+  it('keeps the selection on a same-document or subframe navigation', async () => {
+    const picker = setup();
+    await picker.listSources();
+    assert.isTrue(await picker.pick('screen:1'));
+
+    picker.navigate({ isMainFrame: true, isSameDocument: true });
+    picker.navigate({ isMainFrame: false, isSameDocument: false });
+
+    assert.strictEqual(picker.requestDisplay()?.video?.id, 'screen:1');
+  });
+
+  it('declines a request that asks for audio, or for no video', async () => {
+    const picker = setup();
+    await picker.listSources();
+    assert.isTrue(await picker.pick('screen:1'));
+
+    const respond = Sinon.spy();
+    picker.displayHandler({ ...picker.request, audioRequested: true }, respond);
+    assert.deepEqual(respond.args, [[null]]);
+
+    await picker.listSources();
+    assert.isTrue(await picker.pick('screen:1'));
+    picker.displayHandler({ ...picker.request, videoRequested: false }, respond);
+    assert.deepEqual(respond.args, [[null], [null]]);
+  });
+
+  it('declines a request from another frame', async () => {
+    const picker = setup();
+    await picker.listSources();
+    assert.isTrue(await picker.pick('screen:1'));
+
+    const respond = Sinon.spy();
+    const subframe = { url: pageURL } as WebFrameMain;
+    picker.displayHandler({ ...picker.request, frame: subframe }, respond);
+
+    assert.deepEqual(respond.args, [[null]]);
+  });
+
+  it('declines a request once the main frame shows another page', async () => {
+    const picker = setup();
+    await picker.listSources();
+    assert.isTrue(await picker.pick('screen:1'));
+
+    (picker.mainFrame as { url: string }).url = 'file:///session/other.html';
+
+    assert.isNull(picker.requestDisplay());
+  });
+
+  it('declines a request without a user gesture', async () => {
+    const picker = setup();
+    await picker.listSources();
+    assert.isTrue(await picker.pick('screen:1'));
+
+    const respond = Sinon.spy();
+    picker.displayHandler({ ...picker.request, userGesture: false }, respond);
+
+    assert.deepEqual(respond.args, [[null]]);
   });
 
   it('does not ask for sources when screen capture is restricted', async () => {

@@ -38,6 +38,7 @@ import { sleepFor } from '../Promise';
 import { tr } from '../../../localization/localeTools';
 import { uuidV4 } from '../../../util/uuid';
 import { setScreenShareSource } from '../../../util/screenShare';
+import { remoteScreenShareAfter, videoStatusPayload } from './ScreenShare';
 
 export type InputItem = { deviceId: string; label: string };
 
@@ -265,13 +266,8 @@ async function updateConnectedDevices() {
 }
 
 function sendVideoStatusViaDataChannel() {
-  // a screen share is video from the remote peer's point of view, even with no camera selected
-  const videoEnabledLocally = isScreenSharing || selectedCameraId !== DEVICE_DISABLED_DEVICE_ID;
-  const stringToSend = JSON.stringify({
-    video: videoEnabledLocally,
-    // additive field: clients which don't know about it just ignore it when parsing
-    screenShare: isScreenSharing,
-  });
+  const videoEnabledLocally = selectedCameraId !== DEVICE_DISABLED_DEVICE_ID;
+  const stringToSend = videoStatusPayload({ cameraOn: videoEnabledLocally, isScreenSharing });
   if (dataChannel && dataChannel.readyState === 'open') {
     dataChannel?.send(stringToSend);
   }
@@ -890,8 +886,7 @@ function onDataChannelReceivedMessage(ev: MessageEvent<string>) {
       remoteVideoStreamIsMuted = !parsed.video;
     }
 
-    // additive field, only sent by clients which support screen sharing
-    remoteIsScreenSharing = parsed.screenShare === true;
+    remoteIsScreenSharing = remoteScreenShareAfter(parsed, remoteIsScreenSharing);
   } catch (e) {
     window.log.warn('onDataChannelReceivedMessage Could not parse data in event', ev);
   }
