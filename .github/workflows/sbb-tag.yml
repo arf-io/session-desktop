@@ -3,8 +3,8 @@
 # Whenever session-but-better gains code changes, tag it with upstream's version tag plus
 # `-better`: v1.18.5-better, then v1.18.5-better.2, .3 ... for further releases on the same
 # upstream version. Doc-only and CI-only changes are not tagged.
-# The tag is pushed with SYNC_TOKEN so that it triggers sbb-release.yml (tags pushed with the
-# Actions token do not trigger other workflows).
+# After pushing the tag it starts sbb-release.yml directly, because a tag pushed with the
+# Actions token does not trigger other workflows.
 name: Tag release
 
 on:
@@ -17,7 +17,8 @@ concurrency:
   cancel-in-progress: false
 
 permissions:
-  contents: read
+  contents: write
+  actions: write
 
 jobs:
   tag:
@@ -30,9 +31,11 @@ jobs:
           ref: session-but-better
           fetch-depth: 0
           fetch-tags: true
-          token: ${{ secrets.SYNC_TOKEN }}
+          token: ${{ secrets.SYNC_TOKEN || github.token }}
 
       - name: Decide and create the tag
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
           git config user.name "Damien Heiser"
@@ -77,3 +80,5 @@ jobs:
           git tag -a "$tag" -F "$RUNNER_TEMP/tag-msg.txt"
           git push origin "refs/tags/$tag"
           echo "created $tag"
+          # a tag pushed with the Actions token does not trigger workflows; start the build directly
+          gh workflow run sbb-release.yml --ref session-but-better -f tag="$tag"

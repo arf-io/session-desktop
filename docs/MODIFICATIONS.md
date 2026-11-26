@@ -227,9 +227,14 @@ feature, with none of this infrastructure, so each stays a clean candidate for u
   changed (the `screenShare` field above is the one sanctioned addition).
 - The result is always a PR, never a direct push. A red result becomes a draft labelled
   `needs-human`, or an issue if nothing could be merged.
-- Repository secrets: `SYNC_TOKEN` (a fine-grained PAT with Contents, Pull requests and Workflows
-  set to read/write; Actions' own token can't push upstream commits that touch workflows) and
-  `ANTHROPIC_API_KEY` or `CLAUDE_CODE_OAUTH_TOKEN`.
+- Automation runs only where the repository variable `SBB_AUTOMATION` is `true` (set on
+  arf-io/session-desktop). Repository secrets:
+  - `SYNC_TOKEN`: a fine-grained PAT on this repository with Contents, Pull requests and
+    Workflows set to read/write. The workflows fall back to Actions' own token, but that token
+    can't push upstream commits that touch `.github/workflows`. And because the arf-io
+    organisation does not allow Actions to create pull requests, sync PRs need this token too
+    (or that organisation setting enabled).
+  - `ANTHROPIC_API_KEY` or `CLAUDE_CODE_OAUTH_TOKEN`: only for the conflict/failure agent.
 
 ### Releases
 

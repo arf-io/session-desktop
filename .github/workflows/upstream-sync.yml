@@ -8,8 +8,9 @@
 #   4. opens (or updates) a PR into the branch; nothing is ever pushed to our branches directly
 #
 # Secrets:
-#   SYNC_TOKEN         fine-grained PAT on this repo: Contents, Pull requests, Workflows = read/write.
-#                      (GITHUB_TOKEN cannot push upstream commits that touch .github/workflows.)
+#   SYNC_TOKEN         optional fine-grained PAT on this repo (Contents, Pull requests, Workflows =
+#                      read/write). Without it the Actions token is used, which works except when an
+#                      upstream change touches .github/workflows (GitHub refuses that push).
 #   ANTHROPIC_API_KEY  or CLAUDE_CODE_OAUTH_TOKEN, for the agent step.
 #
 # Scheduled workflows only run from the default branch, so this file lives on session-but-better,
@@ -47,7 +48,7 @@ jobs:
       - uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5
         with:
           fetch-depth: 0
-          token: ${{ secrets.SYNC_TOKEN }}
+          token: ${{ secrets.SYNC_TOKEN || github.token }}
       - name: Fast-forward dev to upstream/dev
         run: bash .github/sbb/upstream-sync.sh mirror
       - id: up
@@ -64,7 +65,7 @@ jobs:
         target: [full-screen-chat, multi-account, session-but-better]
     env:
       TARGET: ${{ matrix.target }}
-      GH_TOKEN: ${{ secrets.SYNC_TOKEN }}
+      GH_TOKEN: ${{ secrets.SYNC_TOKEN || github.token }}
     steps:
       - name: Skip if not selected
         id: sel
@@ -78,7 +79,7 @@ jobs:
           ref: ${{ matrix.target }}
           fetch-depth: 0
           submodules: recursive
-          token: ${{ secrets.SYNC_TOKEN }}
+          token: ${{ secrets.SYNC_TOKEN || github.token }}
 
       - name: Identity
         if: steps.sel.outputs.run == 'true'
@@ -117,7 +118,7 @@ jobs:
         with:
           anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
-          github_token: ${{ secrets.SYNC_TOKEN }}
+          github_token: ${{ secrets.SYNC_TOKEN || github.token }}
           claude_args: >-
             --max-turns 150
             --add-dir ${{ runner.temp }}
