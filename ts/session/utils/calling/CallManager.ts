@@ -38,6 +38,14 @@ import { sleepFor } from '../Promise';
 import { tr } from '../../../localization/localeTools';
 import { uuidV4 } from '../../../util/uuid';
 import { setScreenShareSource } from '../../../util/screenShare';
+import {
+  cameraAfterShareOnRequest,
+  cameraShownOnButton,
+  explainScreenShareRefusal,
+  prepareScreenShareTrack,
+  remoteScreenShareAfter,
+  videoStatusPayload,
+} from './ScreenShare';
 
 export type InputItem = { deviceId: string; label: string };
 
@@ -77,6 +85,11 @@ export type CallManagerOptionsType = {
    * Always false when talking to a client which does not send the `screenShare` field.
    */
   isRemoteScreenSharing: boolean;
+  /**
+   * True from the moment a share is asked for until it is running or has failed: the share
+   * button is disabled meanwhile, so a second request cannot clear the first one's selection.
+   */
+  isScreenSharePending: boolean;
 };
 
 export type CallManagerListener = ((options: CallManagerOptionsType) => void) | null;
@@ -92,12 +105,18 @@ function callVideoListeners() {
         audioInputsList,
         audioOutputsList,
         isRemoteVideoStreamMuted: remoteVideoStreamIsMuted,
-        // while sharing our screen we *are* sending video, even though no camera is selected
-        isLocalVideoStreamMuted: !isScreenSharing && selectedCameraId === DEVICE_DISABLED_DEVICE_ID,
+        // the camera button's state; the local preview also shows while we share our screen
+        isLocalVideoStreamMuted:
+          cameraShownOnButton({
+            isScreenSharing,
+            liveCameraId: selectedCameraId,
+            cameraAfterShare: cameraIdBeforeScreenShare,
+          }) === DEVICE_DISABLED_DEVICE_ID,
         isAudioMuted: selectedAudioInputId === DEVICE_DISABLED_DEVICE_ID,
         currentSelectedAudioOutput: selectedAudioOutputId,
         isScreenSharing,
         isRemoteScreenSharing: remoteIsScreenSharing,
+        isScreenSharePending: pendingShare !== null,
       });
     });
   }
@@ -213,7 +232,8 @@ let selectedAudioOutputId: string = DEVICE_DISABLED_DEVICE_ID;
  * extra m-line would break calls with unmodified Session clients.
  *
  * The consequence, which is by design: while sharing, the camera is off. The camera which was
- * selected before the share started is restored when the share stops.
+ * selected before the share started is restored when the share stops; choosing a camera during
+ * the share changes which one that is, without ending the share.
  */
 let isScreenSharing = false;
 let videoChange = 0;
@@ -265,13 +285,8 @@ async function updateConnectedDevices() {
 }
 
 function sendVideoStatusViaDataChannel() {
-  // a screen share is video from the remote peer's point of view, even with no camera selected
-  const videoEnabledLocally = isScreenSharing || selectedCameraId !== DEVICE_DISABLED_DEVICE_ID;
-  const stringToSend = JSON.stringify({
-    video: videoEnabledLocally,
-    // additive field: clients which don't know about it just ignore it when parsing
-    screenShare: isScreenSharing,
-  });
+  const videoEnabledLocally = selectedCameraId !== DEVICE_DISABLED_DEVICE_ID;
+  const stringToSend = videoStatusPayload({ cameraOn: videoEnabledLocally, isScreenSharing });
   if (dataChannel && dataChannel.readyState === 'open') {
     dataChannel?.send(stringToSend);
   }
@@ -332,7 +347,11 @@ function beginVideoChange() {
   return { id, current, install };
 }
 
-export async function startScreenShare(sourceId: string) {
+/**
+ * @param sourceId the source picked in Session's picker, or null when the OS shows its own picker
+ * (Wayland's desktop portal) as part of getDisplayMedia().
+ */
+export async function startScreenShare(sourceId: string | null) {
   if (isScreenSharing || pendingShare !== null) {
     return;
   }
@@ -341,17 +360,24 @@ export async function startScreenShare(sourceId: string) {
     return;
   }
   pendingShare = change.id;
+  callVideoListeners();
   try {
-    if (!(await setScreenShareSource(sourceId)) || !change.current()) {
-      return;
+    if (sourceId !== null) {
+      const accepted = await setScreenShareSource(sourceId);
+      if (!change.current()) {
+        return;
+      }
+      if (!accepted) {
+        await explainScreenShareRefusal();
+        return;
+      }
     }
     const capture = await navigator.mediaDevices.getDisplayMedia({ video: true, audio: false });
     const track = capture.getVideoTracks()[0];
     if (!track) {
       return;
     }
-    // Keeps text legible on a weak link: WebRTC then drops frame rate before resolution.
-    track.contentHint = 'detail';
+    await prepareScreenShareTrack(track);
     if (!(await change.install(track))) {
       return;
     }
@@ -371,13 +397,19 @@ export async function startScreenShare(sourceId: string) {
     sendVideoStatusViaDataChannel();
     callVideoListeners();
   } catch (error) {
-    if (change.current() && error.name !== 'NotAllowedError' && error.name !== 'AbortError') {
+    if (!change.current()) {
+      // the call ended or the user changed the video since: nothing to report
+    } else if (error.name === 'NotAllowedError' || error.name === 'AbortError') {
+      // declined by our display-media handler: quiet for a cancel, explained otherwise
+      await explainScreenShareRefusal();
+    } else {
       window.log.warn('Could not start screen sharing', error.message);
       ToastUtils.pushToastError('startScreenShare', error.message);
     }
   } finally {
     if (pendingShare === change.id) {
       pendingShare = null;
+      callVideoListeners();
     }
   }
 }
@@ -387,10 +419,24 @@ export async function stopScreenShare() {
     return;
   }
   const restore = cameraIdBeforeScreenShare;
-  await selectCameraByDeviceId(restore);
+  await switchCamera(restore);
 }
 
 export async function selectCameraByDeviceId(cameraDeviceId: string) {
+  if (isScreenSharing) {
+    cameraIdBeforeScreenShare = cameraAfterShareOnRequest({
+      requestedId: cameraDeviceId,
+      cameraAfterShare: cameraIdBeforeScreenShare,
+      cameraIds: camerasList.map(m => m.deviceId),
+      offId: DEVICE_DISABLED_DEVICE_ID,
+    });
+    callVideoListeners();
+    return;
+  }
+  await switchCamera(cameraDeviceId);
+}
+
+async function switchCamera(cameraDeviceId: string) {
   const change = beginVideoChange();
   if (!change) {
     return;
@@ -890,8 +936,7 @@ function onDataChannelReceivedMessage(ev: MessageEvent<string>) {
       remoteVideoStreamIsMuted = !parsed.video;
     }
 
-    // additive field, only sent by clients which support screen sharing
-    remoteIsScreenSharing = parsed.screenShare === true;
+    remoteIsScreenSharing = remoteScreenShareAfter(parsed, remoteIsScreenSharing);
   } catch (e) {
     window.log.warn('onDataChannelReceivedMessage Could not parse data in event', ev);
   }

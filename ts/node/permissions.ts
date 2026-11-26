@@ -20,7 +20,7 @@ const PERMISSIONS: Record<string, boolean> = {
   pointerLock: false,
 };
 
-function createPermissionHandler(userConfig: UserConfig) {
+export function createPermissionHandler(userConfig: UserConfig) {
   return (_webContents: any, permission: any, callback: any) => {
     // We default 'media' permission to false, but the user can override that.
     // Screen sharing only happens inside a call, which already needs this permission, so it is

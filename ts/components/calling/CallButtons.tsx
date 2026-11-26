@@ -1,4 +1,4 @@
-import { MouseEvent, useEffect, useState } from 'react';
+import { MouseEvent, useEffect, useId, useState } from 'react';
 import { contextMenu } from 'react-contexify';
 import { useSelector } from 'react-redux';
 import styled from 'styled-components';
@@ -15,6 +15,7 @@ import { SessionLucideIconButton } from '../icon/SessionIconButton';
 import { LUCIDE_ICONS_UNICODE } from '../icon/lucide';
 import { tr } from '../../localization/localeTools';
 import { ScreenSharePicker } from './ScreenSharePicker';
+import { getScreenShareMode, ScreenShareMode } from '../../util/screenShare';
 
 const VideoInputMenu = ({
   triggerId,
@@ -281,7 +282,8 @@ export const ShowInFullScreenButton = ({ isFullScreen }: { isFullScreen: boolean
 
 /**
  * Screen sharing reuses the call's single video sender, so starting a share turns the camera off
- * and stopping it puts the camera back. See CallManager.startScreenShare.
+ * and stopping it puts the camera back. The camera button keeps showing that camera during the
+ * share, and changes it without ending the share. See CallManager.startScreenShare.
  */
 export const ScreenShareButton = ({
   isFullScreen,
@@ -291,7 +293,38 @@ export const ScreenShareButton = ({
   isScreenSharing: boolean;
 }) => {
   const [pickerOpen, setPickerOpen] = useState(false);
+  const [mode, setMode] = useState<ScreenShareMode | null>(null);
+  const [pending, setPending] = useState(false);
+  const listenerId = `ScreenShareButton-${useId()}`;
   const label = isScreenSharing ? tr('callsStopSharing') : tr('callsShareScreen');
+
+  useEffect(() => {
+    CallManager.addVideoEventsListener(listenerId, options => {
+      setPending(options.isScreenSharePending);
+    });
+    return () => {
+      CallManager.removeVideoEventsListener(listenerId);
+    };
+  }, [listenerId]);
+
+  useEffect(() => {
+    let mounted = true;
+    async function loadMode() {
+      let value: ScreenShareMode = 'picker';
+      try {
+        value = await getScreenShareMode();
+      } catch (e) {
+        window.log?.warn('screen share: could not read the share mode:', e?.message);
+      }
+      if (mounted) {
+        setMode(value);
+      }
+    }
+    void loadMode();
+    return () => {
+      mounted = false;
+    };
+  }, []);
 
   return (
     <>
@@ -319,8 +352,17 @@ export const ScreenShareButton = ({
               void CallManager.stopScreenShare();
               return;
             }
+            if (pending) {
+              return;
+            }
+            if (mode === 'portal') {
+              // the OS shows its own picker, from inside getDisplayMedia()
+              void CallManager.startScreenShare(null);
+              return;
+            }
             setPickerOpen(true);
           }}
+          disabled={!isScreenSharing && (mode === null || pending)}
           iconColor={
             isScreenSharing
               ? 'var(--danger-color)'
