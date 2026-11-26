@@ -1,11 +1,17 @@
-# Session, but Better — build Windows, macOS and Linux for a v*-better tag and publish the Release.
+# Session, but Better — build Windows, macOS and Linux for a v<upstream>-better.<N> tag and
+# publish the Release.
 #
 # Same build steps as upstream CI (actions/setup, pnpm build, unit tests, electron-builder), with
-# one difference: the update feed baked into the app points at arf-io/session-desktop's releases
-# (override with the RELEASE_OWNER / RELEASE_REPO repository variables), so an installed
-# Session, but Better never updates itself to plain upstream Session. package.json is not edited;
-# the feed is set on the electron-builder command line. Releases must be regular releases, not
-# prereleases: the in-app updater follows GitHub's "latest release".
+# these differences, all set on the electron-builder command line (package.json is not edited):
+# - the app's version is the tag's, e.g. 1.18.5-better.2, so the in-app updater can tell our
+#   releases on the same upstream version apart;
+# - the update feed points at arf-io/session-desktop's releases (override with the RELEASE_OWNER /
+#   RELEASE_REPO repository variables), so an installed Session, but Better never updates itself
+#   to plain upstream Session, and uses the "better" channel files (better.yml, better-mac.yml,
+#   better-linux.yml) that match that version;
+# - macOS ships three ways: Apple silicon, Intel and universal, each as a dmg and a zip.
+# Releases must be regular releases, not prereleases. Jobs that fail or that GitHub cannot find a
+# runner for are re-run by sbb-retry.yml.
 #
 # Runs only where the repository variable SBB_AUTOMATION is 'true'. The Release is created in
 # PUBLIC_REPO (default arf-io/session-desktop), where the tag must exist. When that is a
@@ -14,11 +20,11 @@ name: Release
 
 on:
   push:
-    tags: ['v*-better', 'v*-better.*']
+    tags: ['v*-better.*']
   workflow_dispatch:
     inputs:
       tag:
-        description: 'Existing tag to (re)build, e.g. v1.18.5-better'
+        description: 'Existing tag to (re)build, e.g. v1.18.5-better.1'
         required: true
 
 concurrency:
@@ -36,18 +42,31 @@ env:
     --config.publish.provider=github
     --config.publish.owner=${{ vars.RELEASE_OWNER || 'arf-io' }}
     --config.publish.repo=${{ vars.RELEASE_REPO || 'session-desktop' }}
+    --config.publish.channel=better
 
 jobs:
   create_release:
     if: vars.SBB_AUTOMATION == 'true'
     runs-on: ubuntu-22.04
     timeout-minutes: 5
+    outputs:
+      app_version: ${{ steps.version.outputs.app_version }}
     steps:
       - uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5
         with:
           ref: ${{ env.TAG }}
           fetch-depth: 0
           fetch-tags: true
+      - name: App version from the tag
+        id: version
+        run: |
+          set -euo pipefail
+          upstream=$(node -p "require('./package.json').version")
+          app_version="${TAG#v}"
+          if ! [[ "$app_version" =~ ^${upstream//./\\.}-better\.[0-9]+$ ]]; then
+            echo "::error::tag $TAG does not match v${upstream}-better.<N>"; exit 1
+          fi
+          echo "app_version=$app_version" >> "$GITHUB_OUTPUT"
       - name: Create draft release in the public repository
         run: |
           set -euo pipefail
@@ -64,7 +83,10 @@ jobs:
             echo "- Multiple live accounts, each in its own process and data directory"
             echo "- Fully compatible with upstream Session: same network, protocol and database"
             echo
-            echo "Verify downloads against SHA256SUMS.txt. macOS builds are not notarized: right-click → Open on first launch."
+            echo "macOS: the universal build runs on any Mac; the Apple silicon (arm64) and Intel (x64) builds are smaller."
+            echo "Each comes as a dmg and a zip. macOS builds are not notarized: right-click → Open on first launch."
+            echo
+            echo "Verify downloads against SHA256SUMS.txt."
           } > "$RUNNER_TEMP/notes.md"
           gh release create "$TAG" -R "$PUBLIC_REPO" --draft --verify-tag --title "Session, but Better $TAG" --notes-file "$RUNNER_TEMP/notes.md"
 
@@ -91,13 +113,13 @@ jobs:
         run: |
           sed -i 's/"target": "deb"/"target": "${{ matrix.target }}"/g' package.json
           # shellcheck disable=SC2086 # FEED is a list of flags
-          pnpm build-release-base --publish=never $FEED
+          pnpm build-release-base --publish=never $FEED --config.extraMetadata.version=${{ needs.create_release.outputs.app_version }}
       - name: Upload to release
         run: |
           shopt -s nullglob
           files=(release/*.deb release/*.rpm release/*.AppImage)
           # only the AppImage auto-updates on Linux
-          [ "${{ matrix.target }}" = AppImage ] && files+=(release/latest-linux.yml)
+          [ "${{ matrix.target }}" = AppImage ] && files+=(release/better-linux.yml)
           gh release upload "$TAG" -R "$PUBLIC_REPO" "${files[@]}" --clobber
 
   windows:
@@ -121,12 +143,12 @@ jobs:
         shell: bash
         run: |
           # shellcheck disable=SC2086 # FEED is a list of flags
-          pnpm build-release-base --publish=never $FEED
+          pnpm build-release-base --publish=never $FEED --config.extraMetadata.version=${{ needs.create_release.outputs.app_version }}
       - name: Upload to release
         shell: bash
         run: |
           shopt -s nullglob
-          gh release upload "$TAG" -R "$PUBLIC_REPO" release/*.exe release/*.exe.blockmap release/latest.yml --clobber
+          gh release upload "$TAG" -R "$PUBLIC_REPO" release/*.exe release/*.exe.blockmap release/better.yml --clobber
 
   mac:
     needs: create_release
@@ -136,12 +158,8 @@ jobs:
         include:
           - architecture: arm64
             runner: macos-15
-            mac_args: ''
           - architecture: x64
             runner: macos-15-intel
-            # zip only: building the dmg on the Intel runners fails intermittently when hdiutil
-            # cannot detach the image ("Resource busy")
-            mac_args: '--mac zip --x64'
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 60
     env:
@@ -164,19 +182,109 @@ jobs:
       - run: pnpm run build
       - run: pnpm run test
       - name: Package ${{ matrix.architecture }}
+        # zip only: the disk images are made in mac_package from these zips, with retries, because
+        # hdiutil fails intermittently on the hosted runners ("Resource busy") and would take the
+        # zip down with it
         run: |
           source ./build/setup-mac-certificate.sh
           # shellcheck disable=SC2086 # FEED is a list of flags
-          pnpm build-release-base --publish=never ${{ matrix.mac_args }} --config.mac.bundleVersion=${{ github.run_number }} $FEED
+          pnpm build-release-base --publish=never --mac zip --${{ matrix.architecture }} --config.mac.bundleVersion=${{ github.run_number }} $FEED --config.extraMetadata.version=${{ needs.create_release.outputs.app_version }}
       - name: Upload to release
-        # latest-mac.yml is not uploaded: arm64 and x64 would overwrite each other, and macOS only
-        # auto-updates signed apps anyway (see docs/MODIFICATIONS.md, Releases)
+        # better-mac.yml is not uploaded from here: arm64 and x64 would overwrite each other.
+        # mac_package writes one that lists both.
         run: |
           shopt -s nullglob
-          gh release upload "$TAG" -R "$PUBLIC_REPO" release/*.dmg release/*.zip release/*.blockmap --clobber
+          gh release upload "$TAG" -R "$PUBLIC_REPO" release/*.zip release/*.zip.blockmap --clobber
+
+  mac_package:
+    # universal app, the three disk images and the macOS update feed, from the two zips above
+    needs: [create_release, mac]
+    runs-on: macos-15
+    timeout-minutes: 45
+    env:
+      APP_VERSION: ${{ needs.create_release.outputs.app_version }}
+    steps:
+      - uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5
+        with:
+          ref: ${{ env.TAG }}
+      - uses: pnpm/action-setup@41ff72655975bd51cab0327fa583b6e92b6d3061 # v4
+      - uses: actions/setup-node@2028fbc5c25fe9cf00d9f06a71cc4710d4507903 # v6
+        with:
+          node-version-file: '.nvmrc'
+          cache: 'pnpm'
+          cache-dependency-path: 'pnpm-lock.yaml'
+      - name: Install the packaging tools
+        # electron-builder and @electron/universal only; nothing native is compiled here
+        run: pnpm install --frozen-lockfile --ignore-scripts
+      - name: Rosetta, to test the Intel half of the universal app
+        run: arch -x86_64 /usr/bin/true 2>/dev/null || sudo softwareupdate --install-rosetta --agree-to-license
+      - name: Download the arm64 and x64 builds
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/in"
+          gh release download "$TAG" -R "$PUBLIC_REPO" -D "$RUNNER_TEMP/in" \
+            -p "session-desktop-mac-arm64-${APP_VERSION}.zip" -p "session-desktop-mac-x64-${APP_VERSION}.zip"
+          for a in arm64 x64; do
+            # one copy for its own disk image, one for the merge, which modifies its inputs
+            for d in "$a" "merge-$a"; do
+              mkdir -p "$RUNNER_TEMP/$d"
+              ditto -x -k "$RUNNER_TEMP/in/session-desktop-mac-$a-${APP_VERSION}.zip" "$RUNNER_TEMP/$d"
+            done
+          done
+      - name: Merge into a universal app
+        run: node .github/sbb/make-universal-mac.cjs "$RUNNER_TEMP/merge-x64/Session.app" "$RUNNER_TEMP/merge-arm64/Session.app" "$RUNNER_TEMP/universal/Session.app"
+      - name: Native modules load on both architectures
+        run: |
+          set -euo pipefail
+          app="$RUNNER_TEMP/universal/Session.app"
+          lipo -archs "$app/Contents/MacOS/Session"
+          for a in arm64 x86_64; do
+            ELECTRON_RUN_AS_NODE=1 arch "-$a" "$app/Contents/MacOS/Session" .github/sbb/load-native-modules.cjs "$app/Contents/Resources/app.asar"
+          done
+      - name: Disk images and the universal zip
+        run: |
+          set -euo pipefail
+          # Spotlight indexing a freshly written image is the usual cause of hdiutil's intermittent
+          # "Resource busy"; turn it off, and retry
+          sudo mdutil -a -i off >/dev/null 2>&1 || true
+          package() { # <app> <arch> <target>...
+            local app=$1 arch=$2
+            shift 2
+            for attempt in 1 2 3; do
+              # identity=null: keep the signature each app already has
+              # shellcheck disable=SC2086 # FEED is a list of flags
+              if pnpm exec electron-builder --prepackaged "$app" --mac "$@" "--$arch" --publish=never \
+                --config.mac.identity=null --config.extraMetadata.version="$APP_VERSION" \
+                --config.directories.output="$RUNNER_TEMP/out-$arch" $FEED; then
+                return 0
+              fi
+              echo "::warning::packaging $arch $* failed (attempt $attempt)"
+              hdiutil info || true
+              sleep 30
+            done
+            return 1
+          }
+          package "$RUNNER_TEMP/universal/Session.app" universal dmg zip
+          package "$RUNNER_TEMP/arm64/Session.app" arm64 dmg
+          package "$RUNNER_TEMP/x64/Session.app" x64 dmg
+      - name: macOS update feed
+        run: |
+          .github/sbb/mac-update-info.sh "$APP_VERSION" \
+            "$RUNNER_TEMP/in/session-desktop-mac-arm64-${APP_VERSION}.zip" \
+            "$RUNNER_TEMP/in/session-desktop-mac-x64-${APP_VERSION}.zip" > "$RUNNER_TEMP/better-mac.yml"
+          cat "$RUNNER_TEMP/better-mac.yml"
+      - name: Upload to release
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          files=("$RUNNER_TEMP"/out-*/*.dmg "$RUNNER_TEMP"/out-*/*.dmg.blockmap
+                 "$RUNNER_TEMP"/out-universal/*.zip "$RUNNER_TEMP"/out-universal/*.zip.blockmap
+                 "$RUNNER_TEMP/better-mac.yml")
+          [ "${#files[@]}" -ge 8 ] || { echo "::error::expected 3 dmgs, a zip, their blockmaps and the feed; got ${files[*]}"; exit 1; }
+          gh release upload "$TAG" -R "$PUBLIC_REPO" "${files[@]}" --clobber
 
   publish:
-    needs: [linux, windows, mac]
+    needs: [linux, windows, mac, mac_package]
     runs-on: ubuntu-22.04
     timeout-minutes: 10
     steps:

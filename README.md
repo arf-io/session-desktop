@@ -21,15 +21,16 @@ merged after review.
 ## Download
 
 Releases are published at **[arf-io/session-desktop](https://github.com/arf-io/session-desktop/releases)**.
-Each carries upstream's version tag with `-better` on the end: `v1.18.5-better` is Session, but
-Better built on upstream Session 1.18.5. A further release on the same upstream version is
-`v1.18.5-better.2`, and so on. Builds are provided for:
+Each is named for the upstream version it is built on plus our own release number:
+`v1.18.5-better.1` is the first Session, but Better release on upstream Session 1.18.5,
+`v1.18.5-better.2` the next, and so on. Builds are provided for:
 
-| Platform                        | Files                       |
-| ------------------------------- | --------------------------- |
-| Windows x64                     | `.exe` installer            |
-| macOS (Apple silicon and Intel) | `.dmg` / `.zip`             |
-| Linux x64                       | `.deb`, `.rpm`, `.AppImage` |
+| Platform                      | Files                                              |
+| ----------------------------- | -------------------------------------------------- |
+| Windows x64                   | `.exe` installer                                   |
+| macOS, any Mac                | `mac-universal` `.dmg` / `.zip`                    |
+| macOS, Apple silicon or Intel | `mac-arm64` or `mac-x64` `.dmg` / `.zip` (smaller) |
+| Linux x64                     | `.deb`, `.rpm`, `.AppImage`                        |
 
 **Verifying downloads.** Upstream's releases are GPG-signed by Session's release signer; ours are
 not and cannot be. Each release has a `SHA256SUMS.txt`: compare it with
@@ -40,9 +41,12 @@ right-click → **Open**, and macOS won't install updates to them automatically.
 
 **Updates.** The in-app updater installs releases from
 [arf-io/session-desktop](https://github.com/arf-io/session-desktop/releases), never from upstream,
-so an update never replaces Session, but Better with plain Session. As in upstream, the app first
-asks Session's file server whether a newer Session version exists. It offers an update once the
-matching `-better` release is published.
+so an update never replaces Session, but Better with plain Session. It moves up through our
+releases, `-better.1` to `-better.2` and on to the next upstream version's `-better.1`.
+
+**Alongside Session.** Session, but Better installs as `Session` and uses the same account and data
+as an existing Session install, so it can replace it in place. Only one of the two can have an
+account open at a time.
 
 ## Using the extra features
 

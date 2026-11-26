@@ -203,14 +203,21 @@ original verification record: [`docs/TDD-multi-account.md`](TDD-multi-account.md
 
 ## 3. Fork infrastructure (`session-but-better` only)
 
-| File                                  | Purpose                                                                                |
-| ------------------------------------- | -------------------------------------------------------------------------------------- |
-| `README.md`                           | this fork's README                                                                     |
-| `docs/MODIFICATIONS.md`               | this document                                                                          |
-| `.github/workflows/upstream-sync.yml` | fallback upstream sync (off unless `SBB_GITHUB_SYNC=true`)                             |
-| `.github/sbb/upstream-sync.sh`        | the sync logic (`mirror`, `prepare`, `check`, `check-docs`)                            |
-| `.github/workflows/sbb-release.yml`   | builds Windows, macOS and Linux for a `v*-better` tag and publishes the GitHub Release |
-| `.github/workflows/sbb-tag.yml`       | tags every new product version on `session-but-better`                                 |
+| File                                                                 | Purpose                                                                                  |
+| -------------------------------------------------------------------- | ---------------------------------------------------------------------------------------- |
+| `README.md`                                                          | this fork's README                                                                       |
+| `docs/MODIFICATIONS.md`                                              | this document                                                                            |
+| `.github/workflows/upstream-sync.yml`                                | fallback upstream sync (off unless `SBB_GITHUB_SYNC=true`)                               |
+| `.github/sbb/upstream-sync.sh`                                       | the sync logic (`mirror`, `prepare`, `check`, `check-docs`)                              |
+| `.github/workflows/sbb-release.yml`                                  | builds Windows, macOS and Linux for a `v*-better.N` tag and publishes the GitHub Release |
+| `.github/workflows/sbb-tag.yml`                                      | tags every new product version on `session-but-better`                                   |
+| `.github/workflows/sbb-retry.yml`                                    | re-runs release jobs that failed or that GitHub found no runner for                      |
+| `.github/sbb/make-universal-mac.cjs`                                 | merges the arm64 and x64 apps into the universal macOS app                               |
+| `.github/sbb/load-native-modules.cjs`                                | checks every native module loads, run once per architecture                              |
+| `.github/sbb/mac-update-info.sh`                                     | writes `better-mac.yml`, the macOS update feed listing both architectures                |
+| `ts/shared/release_notes.ts`                                         | "Release notes" links: our versions open our release, upstream's open upstream's         |
+| `ts/test/session/unit/versions/release_notes_test.ts`                | tests the links above and the version ordering the updater relies on                     |
+| `ts/mains/main_node.ts`, `ts/components/dialog/debug/components.tsx` | one line each: the Help menu and debug "Release notes" links use `releaseNotesUrl`       |
 
 The feature branches `full-screen-chat` and `multi-account` carry only upstream plus their own
 feature, with none of this infrastructure, so each stays a clean candidate for upstream.
@@ -236,11 +243,21 @@ feature, with none of this infrastructure, so each stays a clean candidate for u
 
 ### Releases
 
-- **Every version of ours is tagged** with upstream's version tag plus `-better`. The first release
-  on upstream 1.18.5 is `v1.18.5-better`; further releases on the same upstream version are
-  `v1.18.5-better.2`, `.3`, and so on. `sbb-tag.yml` creates the tag automatically whenever
-  `session-but-better` gains code changes (doc-only and CI-only changes are not tagged). Each tag
-  is annotated with the upstream base and the feature heads it contains.
+- **Versions.** Every release of ours is `v<upstream version>-better.<N>`: `v1.18.5-better.1` is
+  our first release on upstream Session 1.18.5, `v1.18.5-better.2` the next, and
+  `v1.18.6-better.1` the first once upstream moves to 1.18.6. This is our own release cadence:
+  `sbb-tag.yml` tags `session-but-better` whenever it gains code changes (doc-only and CI-only
+  changes are not tagged), and a release can be cut by hand by running that workflow. Each tag is
+  annotated with the upstream base and the feature heads it contains.
+- **The app carries the same version.** Release builds set the app's version from the tag on the
+  electron-builder command line (`--config.extraMetadata.version=1.18.5-better.2`); `package.json`
+  is not edited. The About screen shows it, and the in-app updater compares it, which is what
+  lets an install move up through our point releases. semver orders these versions the way we
+  need (pinned by `ts/test/session/unit/versions/release_notes_test.ts`):
+  `1.18.5-better.1 < 1.18.5-better.2 < 1.18.6-better.1`. The version isn't sent over the network
+  (requests use a fixed User-Agent). Upstream code that reads it locally only checks it for
+  equality (unsupported-message reprocessing, the "new version" cleanup), so a different string
+  changes nothing there.
 - **Where releases live.** [arf-io/session-desktop](https://github.com/arf-io/session-desktop)
   is the public home of Session, but Better: full source, all branches, tags and releases, with
   clean history (every commit of ours authored `Damien Heiser <dc@arf.io>`, with no tool
@@ -248,33 +265,57 @@ feature, with none of this infrastructure, so each stays a clean candidate for u
   `true`.
 - `sbb-release.yml` builds on a new tag:
   - Windows: x64 NSIS installer;
-  - macOS: arm64 and x64 DMG and zip;
+  - macOS: Apple silicon (arm64), Intel (x64) and universal, each as a DMG and a zip;
   - Linux: deb, rpm and AppImage.
-    It then attaches everything to the GitHub Release for that tag.
+    It then attaches everything, with `SHA256SUMS.txt`, to the GitHub Release for that tag and
+    publishes it.
+- **How the macOS builds are made.** The arm64 and x64 jobs each build only a zip on their own
+  hosted runner. A third job (`mac_package`, Apple silicon) takes the two zips and:
+  1. merges them into a universal app with `@electron/universal`
+     (`.github/sbb/make-universal-mac.cjs`; the script's header explains the four differences it
+     evens out between the two builds) and signs it;
+  2. loads every native module (libsession, its worker, sqlcipher, sharp) under both arm64 and,
+     through Rosetta, x86_64;
+  3. makes the three DMGs and the universal zip with electron-builder from the finished apps,
+     retrying, with Spotlight indexing off. Building the DMG inside the per-architecture jobs used
+     to fail intermittently on the Intel runners (hdiutil: "Resource busy"), and that failure took
+     the zip down with it;
+  4. writes `better-mac.yml`.
+     The universal build is about 1.7 times the size of a single-architecture one (265 MB against
+     about 155 MB zipped): the JavaScript is shared, the native code is there twice.
+- **Retries.** `sbb-retry.yml` runs whenever a Release or Tag release run ends failed or
+  cancelled. A job GitHub could not give a runner (macOS arm64 capacity is the usual case), or
+  whose runner died, is re-run after a 10-minute pause, up to 8 attempts of the run. A job that
+  failed on its own is re-run once; a second failure is left for a person. A run someone cancelled
+  is left alone. Re-running a job re-runs what depends on it, including publishing. On a public
+  repository, GitHub-hosted runners cost nothing, and a job that never got a runner uses no time.
 - **The in-app updater points at arf-io/session-desktop.** Release builds set electron-builder's
   update feed at build time (`--config.publish.owner/repo`, default `arf-io/session-desktop`,
-  overridable with the `RELEASE_OWNER` / `RELEASE_REPO` repository variables); `package.json` is
-  not edited. An installed Session, but Better therefore never "updates" itself to plain upstream
-  Session. How an update is found, unchanged from upstream:
+  overridable with the `RELEASE_OWNER` / `RELEASE_REPO` repository variables). An installed
+  Session, but Better therefore never "updates" itself to plain upstream Session. How an update is
+  found:
 
-  1. Session's file server reports the newest Session version (onion-routed).
-  2. Only if it is newer than the running version does electron-updater ask GitHub.
-  3. With a plain version like `1.18.5`, electron-updater follows GitHub's **latest release**: the
-     newest release that is neither a draft nor a prerelease, whatever its tag is called. It reads
-     `latest.yml` / `latest-linux.yml` from that release.
+  1. Session's file server reports the newest Session version (onion-routed). The updater asks
+     GitHub only if that is newer than the running version. Upstream's `1.18.5` is newer than our
+     `1.18.5-better.N`, so while upstream is on our base version the check always goes through;
+     no updater code is changed.
+  2. Because our version has a prerelease part (`-better.N`), electron-updater reads the
+     releases feed and takes the newest release whose tag is also `-better`, then downloads that
+     release's `better` channel file: `better.yml` (Windows), `better-mac.yml`,
+     `better-linux.yml` (AppImage). The builds write those names because the feed is configured
+     with `--config.publish.channel=better`.
+  3. It installs that release only if its version is newer than the running one.
 
-  So releases on arf-io must be published as regular releases, **not prereleases**. An update is
-  offered once the `-better` release for the new upstream version is published.
+  Releases must still be published as regular releases, not drafts or prereleases. On macOS,
+  `better-mac.yml` lists the arm64 and x64 zips; the updater picks the zip with `arm64` in its name
+  on Apple silicon and the other on Intel. The universal zip is deliberately not listed, so a
+  universal install updates to its own architecture's (smaller) build.
 
-- The binary's version string stays upstream's, with no `-better` suffix inside the app. It isn't sent
-  over the network (requests use a fixed User-Agent), but upstream's code compares it locally: the
-  updater's release-channel logic (`ts/updater`) and unsupported-message handling
-  (`ts/session/unsupported_messages`). Keeping it unchanged keeps that behaviour identical.
-  Consequence: two of our releases on the same upstream version don't auto-update to each other.
-  Download the newer one by hand.
-- **macOS builds are unsigned** until a Developer ID certificate is added (`MAC_CERTIFICATE`,
-  `MAC_CERTIFICATE_PASSWORD`, `SIGNING_*` secrets). Unsigned apps open with right-click → Open,
-  and macOS won't apply auto-updates to them.
+- **macOS builds are signed ad hoc** until a Developer ID certificate is added (`MAC_CERTIFICATE`,
+  `MAC_CERTIFICATE_PASSWORD`, `SIGNING_*` secrets). They open with right-click → Open, and macOS
+  won't apply auto-updates to them: the updater only installs an update signed by the same
+  identity as the installed app, and an ad hoc signature has no stable identity. Windows and the
+  Linux AppImage update normally.
 
 ---
 

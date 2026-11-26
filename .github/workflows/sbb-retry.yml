@@ -1,0 +1,83 @@
+# Session, but Better — re-run release jobs that did not make it.
+#
+# GitHub-hosted runners fail in two ways that have nothing to do with our code:
+# - GitHub cannot find a runner for a job ("The job was not acquired by Runner of type hosted
+#   even after multiple attempts", common for macOS arm64), and cancels it;
+# - a runner dies mid-job ("lost communication with the server").
+# A job like that is re-run after a pause, up to MAX_INFRA_ATTEMPTS attempts of the run. A job
+# that genuinely failed is re-run once (flaky network, disk images); a second failure is real
+# and is left for a person. A run that someone cancelled has none of those messages and is
+# not touched. Re-running a job also re-runs the jobs that depend on it, such as publish.
+name: Retry release jobs
+
+on:
+  workflow_run:
+    workflows: [Release, Tag release]
+    types: [completed]
+
+permissions:
+  actions: write
+  checks: read
+
+concurrency:
+  group: retry-${{ github.event.workflow_run.id }}
+  cancel-in-progress: false
+
+env:
+  MAX_INFRA_ATTEMPTS: 8
+  MAX_FAILURE_ATTEMPTS: 2
+  # minutes to wait before re-running a job GitHub could not find a runner for
+  INFRA_BACKOFF_MINUTES: 10
+
+jobs:
+  retry:
+    if: >-
+      vars.SBB_AUTOMATION == 'true' &&
+      (github.event.workflow_run.conclusion == 'failure' || github.event.workflow_run.conclusion == 'cancelled')
+    runs-on: ubuntu-22.04
+    timeout-minutes: 20
+    env:
+      GH_TOKEN: ${{ github.token }}
+      RUN_ID: ${{ github.event.workflow_run.id }}
+      ATTEMPT: ${{ github.event.workflow_run.run_attempt }}
+      WORKFLOW: ${{ github.event.workflow_run.name }}
+    steps:
+      - name: Decide and re-run
+        run: |
+          set -euo pipefail
+          jobs=$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$RUN_ID/attempts/$ATTEMPT/jobs?per_page=100")
+          failed=$(jq -r '.jobs[] | select(.conclusion == "failure") | .name' <<<"$jobs")
+          infra=""
+          # a job's check run carries the same id; GitHub's runner messages are its annotations
+          while read -r id name; do
+            [ -n "$id" ] || continue
+            if gh api "repos/$GITHUB_REPOSITORY/check-runs/$id/annotations" --jq '.[].message' |
+              grep -qiE 'not acquired by runner|capacity constraints|lost communication with the server|runner has received a shutdown signal'; then
+              infra+="$name"$'\n'
+            fi
+          done < <(jq -r '.jobs[] | select(.conclusion == "cancelled" or .conclusion == "failure") | "\(.id) \(.name)"' <<<"$jobs")
+
+          echo "$WORKFLOW run $RUN_ID attempt $ATTEMPT"
+          echo "failed jobs:"; echo "${failed:-  none}"
+          echo "runner problems:"; echo "${infra:-  none}"
+
+          # failures that are not runner problems
+          real=$(comm -23 <(sort <<<"$failed" | sed '/^$/d') <(sort <<<"$infra" | sed '/^$/d') || true)
+          if [ -n "$real" ]; then
+            if [ "$ATTEMPT" -ge "$MAX_FAILURE_ATTEMPTS" ]; then
+              echo "::error::$WORKFLOW run $RUN_ID still failing after $ATTEMPT attempts: $(tr '\n' ' ' <<<"$real")"
+              exit 1
+            fi
+            echo "re-running failed jobs once"
+          elif [ -n "$infra" ]; then
+            if [ "$ATTEMPT" -ge "$MAX_INFRA_ATTEMPTS" ]; then
+              echo "::error::$WORKFLOW run $RUN_ID: no runner after $ATTEMPT attempts: $(tr '\n' ' ' <<<"$infra")"
+              exit 1
+            fi
+            echo "waiting ${INFRA_BACKOFF_MINUTES} minutes for runner capacity"
+            sleep $((INFRA_BACKOFF_MINUTES * 60))
+          else
+            echo "nothing to retry (cancelled by a person, or skipped jobs only)"
+            exit 0
+          fi
+          gh run rerun "$RUN_ID" -R "$GITHUB_REPOSITORY" --failed

@@ -1,8 +1,11 @@
 # Session, but Better — tag every new version of ours.
 #
-# Whenever session-but-better gains code changes, tag it with upstream's version tag plus
-# `-better`: v1.18.5-better, then v1.18.5-better.2, .3 ... for further releases on the same
-# upstream version. Doc-only and CI-only changes are not tagged.
+# Whenever session-but-better gains code changes, tag it with upstream's version plus `-better.N`:
+# v1.18.5-better.1, v1.18.5-better.2 ... for our own releases on the same upstream version, then
+# v1.18.6-better.1 once upstream moves. That is our release cadence: every code change merged
+# here is a release, and a release can also be cut by hand with "Run workflow". The release
+# build gives the app the same version (1.18.5-better.2), which the in-app updater compares, so
+# installs move up through our point releases. Doc-only and CI-only changes are not tagged.
 # After pushing the tag it starts sbb-release.yml directly, because a tag pushed with the
 # Actions token does not trigger other workflows.
 name: Tag release
@@ -42,12 +45,12 @@ jobs:
           git config user.email "dc@arf.io"
           git fetch --quiet --no-tags https://github.com/session-foundation/session-desktop.git +refs/heads/dev:refs/remotes/upstream/dev
 
-          if git tag --points-at HEAD | grep -qE -- '-better(\.[0-9]+)?$'; then
+          if git tag --points-at HEAD | grep -qE -- '-better\.[0-9]+$'; then
             echo "HEAD is already tagged: $(git tag --points-at HEAD | tr '\n' ' ')"; exit 0
           fi
 
-          last=$(git describe --tags --match 'v*-better*' --abbrev=0 HEAD 2>/dev/null || true)
-          if [ -n "$last" ]; then
+          last=$(git describe --tags --match 'v*-better.*' --abbrev=0 HEAD 2>/dev/null || true)
+          if [ -n "$last" ] && [ "${{ github.event_name }}" != workflow_dispatch ]; then
             # automation, CI and docs changes are not a new version of the app
             code=$(git diff --name-only "$last..HEAD" | grep -vE '^(docs/|\.github/)|\.md$' || true)
             if [ -z "$code" ]; then
@@ -56,13 +59,9 @@ jobs:
           fi
 
           version=$(node -p "require('./package.json').version")
-          if ! git rev-parse -q --verify "refs/tags/v${version}-better" >/dev/null; then
-            tag="v${version}-better"
-          else
-            # `|| true`: with no numbered tag yet, grep matches nothing, which pipefail would treat as fatal
-            n=$( (git tag -l "v${version}-better.*" | sed "s/^v${version}-better\.//" | grep -E '^[0-9]+$' || true) | sort -n | tail -1)
-            tag="v${version}-better.$(( ${n:-1} + 1 ))"
-          fi
+          # `|| true`: with no numbered tag yet, grep matches nothing, which pipefail would treat as fatal
+          n=$( (git tag -l "v${version}-better.*" | sed "s/^v${version}-better\.//" | grep -E '^[0-9]+$' || true) | sort -n | tail -1)
+          tag="v${version}-better.$(( ${n:-0} + 1 ))"
 
           base=$(git merge-base HEAD upstream/dev)
           {
