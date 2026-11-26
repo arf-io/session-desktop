@@ -297,6 +297,7 @@ declare module 'react' {
     | 'staged-attachments-container'
     | 'path-light-container'
     | 'end-call'
+    | 'accounts-section'
     | 'end-voice-message'
     | 'edit-profile-icon'
     | 'edit-community-details'
