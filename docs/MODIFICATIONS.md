@@ -150,6 +150,7 @@ every other branch.
 - **On this branch, 2026-11-25** (macOS, Electron 40, the dev build of `session-but-better`): a
   real call between two throwaway accounts over the Session network, each running as its own
   account process (§2).
+
   - Build, 1071 unit tests and lint are green.
   - Both ends showed the fullscreen and share buttons.
   - Fullscreen covered the whole 1920×1200 display, with the exit pill.
@@ -159,6 +160,23 @@ every other branch.
   - Stopping the share restored the prior camera-off video.
   - Esc left fullscreen and kept the call.
   - Hang-up ended the call on both sides.
+
+- **Packaged builds, macOS and Linux, 2026-11-26** (`1.18.5-better.1`: a macOS arm64 zip and a
+  Linux x86_64 AppImage, each on its own throwaway profile): a real call between a Mac account and
+  an Arch Linux account in a GNOME 51 Wayland session (native Wayland, PipeWire,
+  xdg-desktop-portal-gnome).
+  - Messages went both ways, the call connected, and both sides entered fullscreen.
+  - **Wayland portal mode:** on Linux our picker did not appear. GNOME's own share dialog chose
+    the source, and the Share button stayed disabled until the share ran.
+  - **Cap:** the Mac received the Linux screen at 1728x1080, the 1080-line cap with the display's
+    aspect kept.
+  - **Stopping:** after "Stop sharing" the Mac was back on the black camera-off video.
+  - **Found and fixed:** in fullscreen, the fullscreen and share buttons drew a black icon on no
+    background, so they were invisible on the black call view. They now share upstream's
+    fullscreen button background. GNOME also takes the window out of fullscreen while its share
+    dialog is open.
+  - **Not exercised here:** sharing from macOS (the test build had no Screen Recording grant),
+    Windows, and X11.
 
 ### Known limits
 
@@ -275,6 +293,16 @@ original verification record: [`docs/TDD-multi-account.md`](TDD-multi-account.md
     account.
 - The original record (V1–V8, 2026-09-20) is in the TDD, including message delivery to a hidden
   account.
+
+- **Packaged AppImage on Arch Linux / GNOME Wayland, 2026-11-26** (throwaway `XDG_CONFIG_HOME`):
+  - "Add account" started a second live process through the AppImage file itself (`$APPIMAGE`),
+    with its own data directory, and recorded it in the registry.
+  - Launching that account again handed over to the running one and exited, leaving one process.
+  - A launch without `--profile` opened the most recently used account and started the others in
+    the background, as designed.
+  - **Found and fixed:** upstream's AppImage launcher passes an empty argument on every start.
+    Copied into sibling launches and relaunches, these piled up, one more per launch; they are
+    now dropped.
 
 ### Known limits
 
