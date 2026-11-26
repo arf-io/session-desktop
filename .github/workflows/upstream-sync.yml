@@ -145,7 +145,9 @@ jobs:
             4. Finish every merge: resolve, `git add`, `git commit --no-edit`; then merge each remaining
                source listed above the same way (`git merge --no-ff --no-edit <source>`), skipping any
                already contained in HEAD.
-            5. Verify with: pnpm run build && pnpm run test && pnpm run lint && git diff --exit-code
+            5. Commit messages must pass the repo's commitlint (conventional, lower-case subject),
+               e.g. "fix(sync): keep account switcher working after upstream modal refactor".
+               Verify with: pnpm run build && pnpm run test && pnpm run lint && git diff --exit-code
                Commit any fixes. Do NOT push and do NOT rewrite history (no rebase, reset, amend).
             6. If you cannot make it green without breaking rule 1 or 2, stop, leave everything
                committed, and write the reason to $RUNNER_TEMP/agent-notes.md.
