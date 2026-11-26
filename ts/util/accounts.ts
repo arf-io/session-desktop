@@ -13,7 +13,15 @@ export type AccountSummary = {
   isCurrent: boolean;
 };
 
-export type AccountsResult = { currentId: string; accounts: Array<AccountSummary> };
+export type AccountsResult = {
+  currentId: string;
+  accounts: Array<AccountSummary>;
+  /** set when the registry could not be read */
+  error?: string;
+};
+
+/** whether another account's process could be started; `error` says why not */
+export type LaunchResult = { ok: true } | { ok: false; error: string };
 
 export async function getAccounts(): Promise<AccountsResult> {
   return ipcRenderer.invoke('get-accounts');
@@ -26,7 +34,7 @@ export async function getAccounts(): Promise<AccountsResult> {
  * second copy, because Electron's single-instance lock is per data directory — the new process
  * hands its arguments to the running one, which focuses its window, and then exits.
  */
-export async function switchToAccount(accountId: string): Promise<boolean> {
+export async function switchToAccount(accountId: string): Promise<LaunchResult> {
   return ipcRenderer.invoke('switch-account', accountId);
 }
 
@@ -34,14 +42,20 @@ export async function switchToAccount(accountId: string): Promise<boolean> {
  * Register a new account and open it. The new window starts at onboarding, where the user creates
  * or restores a Session account as usual.
  */
-export async function addAccount(label?: string): Promise<{ id: string; label: string }> {
+export async function addAccount(
+  label?: string
+): Promise<
+  { ok: true; id: string; label: string; launchError?: string } | { ok: false; error: string }
+> {
   return ipcRenderer.invoke('add-account', label);
 }
 
+/** false if the change could not be saved */
 export async function renameAccount(accountId: string, label: string): Promise<boolean> {
   return ipcRenderer.invoke('rename-account', accountId, label);
 }
 
+/** false if the change could not be saved */
 export async function setAccountRunInBackground(
   accountId: string,
   value: boolean
@@ -52,6 +66,7 @@ export async function setAccountRunInBackground(
 /**
  * Removes an account from the switcher. Its data directory is left on disk and returned, because
  * throwing away someone's messages and keys as a side effect of tidying a list is not recoverable.
+ * An account that is still running is refused, with the reason.
  */
 export async function forgetAccount(
   accountId: string
