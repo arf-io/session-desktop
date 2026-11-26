@@ -84,6 +84,26 @@ describe('multi-account processes (account_process)', () => {
       expect(launch.env.SESSION_PROFILE).to.equal('abc123def456');
     });
 
+    it('drops the empty arguments an AppImage launcher adds, so they do not pile up', () => {
+      // upstream's launcher-script.sh passes "" when it does not need --no-sandbox
+      const launch = buildAccountLaunch('a', false, {
+        argv: ['/tmp/.mount_S/session-desktop-bin', '', '', '--use-tray-icon'],
+        execPath: '/tmp/.mount_S/session-desktop-bin',
+        env: { APPIMAGE: '/home/u/Session.AppImage' },
+      });
+      expect(launch.args).to.deep.equal([
+        '--use-tray-icon',
+        `${PROFILE_ARG_PREFIX}a`,
+        SPAWNED_SIBLING_ARG,
+      ]);
+      const relaunch = buildRelaunchOptions('a', {
+        argv: ['/tmp/.mount_S/session-desktop-bin', '', '--use-tray-icon'],
+        execPath: '/tmp/.mount_S/session-desktop-bin',
+        env: { APPIMAGE: '/home/u/Session.AppImage' },
+      });
+      expect(relaunch.args).to.deep.equal(['--use-tray-icon', `${PROFILE_ARG_PREFIX}a`]);
+    });
+
     it('marks it background only when asked', () => {
       const facts = { argv: parentArgv, execPath: '/x', env: {} };
       expect(buildAccountLaunch('a', true, facts).args).to.include(BACKGROUND_ARG);

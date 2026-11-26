@@ -43,9 +43,18 @@ export function executableFor({ execPath, env }: Pick<ProcessFacts, 'execPath' |
   return env.APPIMAGE || execPath;
 }
 
+/**
+ * An empty argument carries nothing, and upstream's AppImage launcher script adds one to every
+ * start (its optional `--no-sandbox`, quoted). Passed on, they would pile up, one more per launch.
+ */
+function isEmptyArg(arg: string) {
+  return arg === '';
+}
+
 /** arguments of ours that must not be inherited by a different account's process */
 function isStrippedForSibling(arg: string) {
   return (
+    isEmptyArg(arg) ||
     arg.startsWith(PROFILE_ARG_PREFIX) ||
     arg === BACKGROUND_ARG ||
     arg === SPAWNED_SIBLING_ARG ||
@@ -89,7 +98,9 @@ export function buildRelaunchOptions(
 ): { args: Array<string>; execPath: string } {
   const args = facts.argv
     .slice(1)
-    .filter(arg => !arg.startsWith(PROFILE_ARG_PREFIX) && arg !== BACKGROUND_ARG);
+    .filter(
+      arg => !isEmptyArg(arg) && !arg.startsWith(PROFILE_ARG_PREFIX) && arg !== BACKGROUND_ARG
+    );
   args.push(`${PROFILE_ARG_PREFIX}${accountId}`);
   return { args, execPath: executableFor(facts) };
 }
