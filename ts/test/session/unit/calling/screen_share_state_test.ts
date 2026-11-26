@@ -11,6 +11,7 @@ import {
   videoStatusPayload,
 } from '../../../../session/utils/calling/ScreenShare';
 import { TestUtils } from '../../../test-utils';
+import { callButtonBackground } from '../../../../components/calling/CallButtons';
 
 /**
  * These are the decisions CallManager sends and applies over the data channel. The data channel
@@ -223,5 +224,16 @@ describe('outgoing screen share cap', () => {
     await prepareScreenShareTrack(track);
 
     assert.strictEqual(track.contentHint, 'detail');
+  });
+});
+
+describe('call buttons in fullscreen', () => {
+  it('have a visible background, as upstream camera and microphone buttons do', () => {
+    // the fullscreen icon is black on a black call view: a transparent button is invisible
+    assert.strictEqual(callButtonBackground(true), 'var(--call-buttons-action-background-color)');
+  });
+
+  it('keep the regular background outside fullscreen', () => {
+    assert.strictEqual(callButtonBackground(false), 'var(--call-buttons-background-color)');
   });
 });
