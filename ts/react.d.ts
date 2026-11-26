@@ -304,6 +304,7 @@ declare module 'react' {
     | 'screen-share-cancel'
     | 'screen-share-open-settings'
     | 'exit-full-screen-call'
+    | 'accounts-section'
     | 'end-voice-message'
     | 'edit-profile-icon'
     | 'edit-community-details'
