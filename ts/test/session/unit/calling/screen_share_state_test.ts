@@ -5,6 +5,7 @@ import {
   cameraAfterShareOnRequest,
   cameraShownOnButton,
   explainScreenShareRefusal,
+  prepareScreenShareTrack,
   remoteScreenShareAfter,
   screenShareRefusalMessage,
   videoStatusPayload,
@@ -185,5 +186,42 @@ describe('screen share refusals in the renderer', () => {
       isMac: false,
     });
     assert.isTrue(toast.notCalled);
+  });
+});
+
+describe('outgoing screen share cap', () => {
+  beforeEach(() => {
+    TestUtils.stubWindowLog();
+  });
+
+  afterEach(() => {
+    Sinon.restore();
+  });
+
+  function stubTrack(applyConstraints: Sinon.SinonStub) {
+    return { contentHint: '', applyConstraints } as unknown as MediaStreamTrack;
+  }
+
+  it('caps the share at 1920x1080 and 30 fps, with only upper bounds so the aspect is kept', async () => {
+    const applyConstraints = Sinon.stub().resolves();
+    const track = stubTrack(applyConstraints);
+
+    await prepareScreenShareTrack(track);
+
+    assert.isTrue(applyConstraints.calledOnce);
+    assert.deepEqual(applyConstraints.firstCall.args[0], {
+      width: { max: 1920 },
+      height: { max: 1080 },
+      frameRate: { max: 30 },
+    });
+    assert.strictEqual(track.contentHint, 'detail');
+  });
+
+  it('keeps sharing when the cap cannot be applied', async () => {
+    const track = stubTrack(Sinon.stub().rejects(new Error('OverconstrainedError')));
+
+    await prepareScreenShareTrack(track);
+
+    assert.strictEqual(track.contentHint, 'detail');
   });
 });

@@ -121,3 +121,26 @@ export async function explainScreenShareRefusal({
     toast('startScreenShare', message);
   }
 }
+
+/**
+ * The most we send of a shared screen. Unmodified peers (often phones) get the share as ordinary
+ * camera video, so a 5K display is scaled down to fit 1920x1080, keeping its aspect ratio, and at
+ * most 30 frames a second.
+ */
+export const screenShareConstraints: MediaTrackConstraints = {
+  width: { max: 1920 },
+  height: { max: 1080 },
+  frameRate: { max: 30 },
+};
+
+export async function prepareScreenShareTrack(track: MediaStreamTrack) {
+  // Keeps text legible on a weak link: WebRTC then drops frame rate before resolution.
+  // eslint-disable-next-line no-param-reassign
+  track.contentHint = 'detail';
+  try {
+    await track.applyConstraints(screenShareConstraints);
+  } catch (e) {
+    // the share still works uncapped; better than no share at all
+    window.log?.warn('screen share: could not cap the shared video:', e?.message);
+  }
+}

@@ -42,6 +42,7 @@ import {
   cameraAfterShareOnRequest,
   cameraShownOnButton,
   explainScreenShareRefusal,
+  prepareScreenShareTrack,
   remoteScreenShareAfter,
   videoStatusPayload,
 } from './ScreenShare';
@@ -369,8 +370,7 @@ export async function startScreenShare(sourceId: string | null) {
     if (!track) {
       return;
     }
-    // Keeps text legible on a weak link: WebRTC then drops frame rate before resolution.
-    track.contentHint = 'detail';
+    await prepareScreenShareTrack(track);
     if (!(await change.install(track))) {
       return;
     }
