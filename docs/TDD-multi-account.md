@@ -1,10 +1,11 @@
 # TDD — Session Desktop: multiple accounts, all of them live
 
 - **Document**: `docs/TDD-multi-account.md`
-- **Version**: 1.0
-- **Date**: 2026-09-20
-- **Branch**: `feature/call-fullscreen-and-screenshare`
-- **Status**: implemented; §5 records what was verified and what was not.
+- **Version**: 1.1
+- **Date**: 2026-11-26 (1.0: 2026-09-20)
+- **Branch**: `multi-account`
+- **Status**: implemented; §5 records what was verified and what was not. 1.1 fixes the
+  review findings listed in §5, "Review fixes in 1.1".
 
 ---
 
@@ -36,7 +37,9 @@ parked ones.
 | R4 | An existing install keeps its account, unchanged, with no migration step | V1 |
 | R5 | Two processes must never open one account's database | V3 |
 | R6 | Selecting an account that is already running brings its window forward rather than starting a second copy | V3, V5 |
-| R7 | Removing an account from the list must not destroy its data | design §3.5 |
+| R7 | Removing an account from the list must not destroy its data | design §3.5, unit tests |
+| R8 | No account is ever lost from the registry: not by concurrent writers, not by a torn or unparseable file | unit tests (§5, "Review fixes in 1.1") |
+| R9 | A process never comes back as a different account when it restarts | unit tests (§5, "Review fixes in 1.1") |
 
 Out of scope, stated rather than silently dropped: a **unified inbox** (one window listing every
 account's conversations). That needs the singletons in §1 to become per-account inside a single
@@ -83,8 +86,56 @@ process that remembered the registry would work from its own start-up snapshot: 
 never show an account added elsewhere, and its next whole-object write would erase accounts added
 since — a cross-process lost update, and one that can happen without anyone touching the UI,
 because `update-account-meta` writes as soon as a background account finishes loading. The file is
-a few hundred bytes and is read on user actions, not in a loop. Atomic write-then-rename keeps each
-write whole; the residual simultaneous-write window does not justify a lock at this frequency.
+a few hundred bytes and is read on user actions, not in a loop. The last good copy is kept only as
+a fallback for *read-only* callers when the file cannot be read at all; no write is ever based on
+it.
+
+**Every read-modify-write holds a cross-process lock.** 1.0 argued that atomic rename made a lock
+unnecessary at this write frequency. Review showed otherwise: with 4 processes adding accounts at
+once, 62 of 100 returned ids were never persisted, because every writer read, modified and renamed
+over the others' work — and all of them used the same `.tmp` name. The lock:
+
+- is a directory, `<registry>.lock`, because `mkdir` is atomic and fails with `EEXIST` on every
+  platform Session ships on (on Windows a directory being deleted also reports `EPERM`/`EACCES`/
+  `EBUSY`, treated as contention);
+- holds an owner record `{ pid, at, token }`;
+- is broken when its owner pid is dead (`process.kill(pid, 0)`: `ESRCH` dead, `EPERM` alive), when
+  it is older than 10 s, or when it has no readable owner record and is older than 2 s. Breaking
+  renames it to a unique tombstone first, so two processes cannot both break it, and gives it back
+  if somebody took it in between. A writer checks it still owns the lock before its final rename;
+- is waited for with a synchronous back-off (`Atomics.wait`, which Electron's main process allows)
+  for up to 5 s, then the operation fails visibly.
+
+Each write goes to a per-process tmp name (`<registry>.<pid>-<random>.tmp`), is fsynced and is
+renamed into place (retried on Windows' transient `EPERM`/`EBUSY`). When a stale lock is broken,
+tmp files left by writers that are no longer alive are deleted.
+
+**Absent, unparseable and unreadable are three different things.**
+
+- *Absent* (`ENOENT`): first run. A default registry is created, under the lock, after re-reading.
+- *Unparseable* (bad JSON, no usable `accounts`): retried a few times over ~150 ms. If it is still
+  bad, under the lock and after re-reading, the file is **copied** to
+  `<registry>.corrupt-<timestamp>` and a registry rebuilt from the data directories that exist is
+  renamed over it: the default account first, then every `Session-[<base>-]acct-<id>` directory
+  whose id has the generated format, oldest first. Copying rather than moving the bad file means
+  there is never a moment with no file, in which another process would see a first run. Labels and
+  identities come from this process's last good read where it has one; otherwise the renderer
+  reports them again as each account runs. Re-adopted accounts the process did not know come back
+  with "Background" off, so a repair does not start a crowd of processes at the next launch. An
+  account that had been *forgotten* comes back, because forgetting keeps its data.
+- *Unreadable* (permissions, I/O): never written over. Read-only callers use the last good copy if
+  there is one; mutations fail.
+
+**Mutations fail visibly.** `addAccount` throws rather than return an id that was never saved;
+rename, background toggle, "last used" and identity updates return `false`; forgetting returns a
+reason. Every account IPC handler returns a result instead of throwing, and the switcher shows a
+toast for each failure. Resolving *this process's* account never throws: if the registry can be
+neither read nor created, the process runs the default account, which is the directory stock
+Session uses.
+
+**Ids are validated wherever they enter** (registry file, `--profile=`, `SESSION_PROFILE`, IPC):
+`[A-Za-z0-9_-]{1,64}`. An entry with any other id is ignored, and an account's data directory is
+checked to be a direct child of appData.
 
 Which account *this process is* stays memoized: another process rewriting `activeId` must never
 change who we are half way through our own lifetime.
@@ -95,7 +146,7 @@ Electron's single-instance lock lives in the user-data directory. Because every 
 own directory, the lock is **per account**, and the two operations collapse into one:
 
 ```
-switch to account X  ==  spawn(process.execPath, [...argv, --profile=X])
+switch to account X  ==  spawn($APPIMAGE || process.execPath, [...argv, --profile=X])
 ```
 
 - X not running → the new process starts it.
@@ -104,6 +155,35 @@ switch to account X  ==  spawn(process.execPath, [...argv, --profile=X])
 
 No custom IPC bus between accounts is needed, and there is no way to end up with two processes on
 one database.
+
+The mechanics live in `ts/node/config/account_process.ts`, so `main_node.ts` only calls in:
+
+- **Arguments.** A sibling inherits our argv minus `--profile=`, `--session-background`,
+  `--session-spawned-sibling`, `--inspect*`, `--remote-debugging-port` (two processes cannot share
+  a debug port) and `--user-data-dir` (which would put every account on one directory), plus its
+  own `--profile=<id>` and `--session-spawned-sibling`, and `--session-background` only when asked.
+- **AppImage.** Inside an AppImage `process.execPath` is on this process's FUSE mount, which
+  disappears when this process quits, so `$APPIMAGE` is started instead, for siblings and for
+  relaunches.
+- **Failure is reported.** A spawn failure (`ENOENT`, `EACCES`) arrives as an asynchronous `error`
+  event, which with no listener is an uncaught exception in the main process. The launch resolves
+  only on `spawn` or `error`, and the switcher shows the error. Ids not in the registry are refused.
+
+**Relaunching keeps the account (R9).** A process started without `--profile=` resolved its
+account from `activeId`, which other accounts change. `app.relaunch()` (restart, reset database)
+is therefore given this process's argv minus `--profile=` and `--session-background`, plus
+`--profile=<this account>`. `--session-spawned-sibling` is kept, so a sibling does not start
+fanning out. The updater's relaunch cannot be given arguments: Squirrel.Mac, the NSIS installer
+and the AppImage updater each start the app with their own command line. Two pins cover them:
+
+- at start-up each account process sets `SESSION_PROFILE=<its id>` in its own environment, which
+  is consulted before `activeId`. The AppImage updater spawns the new AppImage, and the NSIS
+  updater its installer, with a copy of that environment. The AppImage one does so *before*
+  `before-quit-for-update` fires, so the second pin alone would be too late for it;
+- on `before-quit-for-update`, `activeId` is pointed at this account, for Squirrel.Mac, whose
+  relaunch does not inherit our environment and happens after this process has exited. Another
+  account changing `activeId` in between would still win; that window is not closed. Whether the
+  NSIS installer passes its environment on to the app it starts has not been verified.
 
 **R5 required a fix to existing code.** `main_node.ts` only quit on a failed lock when
 `NODE_APP_INSTANCE === 0`, an escape hatch so developers could run several copies. With
@@ -123,12 +203,36 @@ A background account is launched with `--session-background`, which creates its 
 receiving, notifying — that simply is not in your face. Bringing it forward is the same
 "switching is launching" path as everything else.
 
+- **Its password window is not shown either.** A password-protected background account waits,
+  locked and not polling, until the user asks for it; `second-instance` then shows its password
+  window, and the main window created after unlocking is shown. (`--session-background` stays in
+  argv for the life of the process, so "the user has asked for it" is separate state.)
+- **A background start never reveals a running account.** When the first instance restarts, it
+  fans out again; an account that is already running receives that as `second-instance` with
+  `--session-background` in the command line, and ignores it.
+- **Closing its window hides it.** Upstream decides hide-or-quit from the tray *setting* or macOS.
+  A background account always has a tray icon, so the rule is now: hide when quitting has not been
+  requested and (macOS, or the tray setting, or this process has a tray, or this is a background
+  launch). Otherwise closing a background account's window on Windows or Linux would quit it.
+- **Tray icons say whose they are.** Once there is more than one account, each process's tray
+  tooltip reads `Session - <label>` and its menu starts with the label (one optional parameter on
+  upstream's `createTrayIcon`).
+
 ### 3.5 Removing an account (R7)
 
 "Remove from this list" forgets the account in the registry and **leaves its data directory on
 disk**, returning the path so the UI can say where it is. Deleting someone's messages and keys as
 a side effect of tidying a list is not a recoverable mistake, so it is not something this feature
 does. The current account and the default account cannot be forgotten.
+
+**A running account cannot be forgotten**, because that would leave a live Session no switcher can
+reach. Each account process writes `session-account.pid` into its own data directory once it holds
+that directory's single-instance lock (never before: a losing second instance would overwrite the
+record), and removes it on quit if it is still its own. An account is running if its recorded pid
+is this process or answers `process.kill(pid, 0)`. A crash leaves the record behind; if the
+operating system has since reused that pid, the account looks running and forgetting is refused
+until it is started and quit once. That errs on the safe side. Forgetting checks liveness and then
+writes; an account launched in that instant would still be forgotten while running.
 
 ### 3.6 UI
 
@@ -210,8 +314,66 @@ construction. Fixed, and re-verified as V3.
   the tray are all cross-platform, but unverified there.
 - **Many accounts.** Three accounts at most (plus a further instance as the message sender) were
   run. The staggering in §3.4 is a precaution, not a measured limit.
-- **No unit tests** cover `profiles.ts`: it depends on `electron.app` paths, which the mocha/jsdom
-  suite cannot provide. Its behaviour is covered by V1–V6 above rather than by an assertion.
+
+### Review fixes in 1.1 (2026-11-26)
+
+A code review found these; each was checked against the code before being changed.
+
+| Finding | Fix | Covered by |
+|---|---|---|
+| A fresh process that could not parse the registry wrote a one-account default over it | §3.2: default only on `ENOENT`; retry, keep a `.corrupt-` copy, rebuild from data directories | `registry_processes_test` (forked fresh process), `profiles_test` (empty, torn and empty-`accounts` files; unreadable file) |
+| Concurrent writers lost updates; one shared `.tmp` name | §3.2: lock, per-process tmp names | `registry_processes_test`: 4 processes × 25 adds |
+| Writes failed silently and returned unsaved ids | §3.2: mutations throw or return `false`/a reason; IPC and switcher show it | `profiles_test` with `fs.renameSync` stubbed to fail |
+| A spawn error crashed the main process; launch always reported success | §3.3: launch resolves on `spawn`/`error` | `account_process_test`: real spawn of a missing executable |
+| A relaunch could come back as another account | §3.3: relaunch pins `--profile=` | `account_process_test` with `activeId` moved elsewhere |
+| Closing a background account's window on Windows/Linux quit it | §3.4: hide whenever there is a tray or a background launch | `account_process_test` (pure decision) |
+| Several tray icons could not be told apart | §3.4: label in tooltip and menu | `account_process_test` (label source) |
+| Forgetting a running account orphaned it | §3.5: pid record, refusal | `profiles_test` with a real live child process |
+| A background launch showed its password window | §3.4 | `account_process_test` (show decision); see below |
+| AppImage siblings ran from the parent's mount | §3.3: `$APPIMAGE` | `account_process_test` |
+| `--user-data-dir=` reached siblings | §3.3: stripped | `account_process_test` |
+
+Also found while fixing: a restarted first instance re-launched running background accounts with
+`--session-background`, and their `second-instance` handler then showed their windows (§3.4); and
+a writer killed mid-write left its tmp file behind (§3.2). Both fixed and tested.
+
+Observed:
+
+- Before the fix, the new cross-process tests failed: `62 of 100 returned ids were never
+  persisted`, and a fresh process given a torn registry returned `[ 'default' ]` only.
+- After: unit suite 1079 passing / 0 failing (1055 before), build exit 0, lint clean.
+- Stress outside the suite: 8 processes × 60 adds, 5 rounds: 480 returned, 0 errors, 0 lost, 481
+  on disk, no tmp or lock files left, each round.
+- A writer `SIGKILL`ed while holding the lock, with a half-written tmp file: the next writer broke
+  the lock, swept the tmp file and saved its account.
+- `Atomics.wait` runs in an Electron 40 main process (the lock's back-off).
+
+In the running app (macOS, Electron 40, dev build, `NODE_APP_INSTANCE=smoke`, with a throwaway
+home directory so nothing touched a real profile), driving the account IPC over the DevTools
+protocol:
+
+- start-up logged `userData: …/Session-development-smoke (account default)` and wrote
+  `session-account.pid` with the main process's pid;
+- a second identical launch logged `quitting; this account is already running in another
+  process`, exited 0 and left the record alone;
+- `add-account` returned `{"ok":true,"id":"db77ea96726d","label":"Account 2"}` and started
+  `Electron ./app --profile=db77ea96726d --session-spawned-sibling`: the parent's
+  `--remote-debugging-port=9333` was not passed on;
+- `forget-account` on that running account returned `"That account is still running. Quit it
+  first, then remove it."`; `switch-account` with an unknown id and with `../x` returned
+  `"No such account."`;
+- with `activeId` now pointing at the new account, `restart` from the first window (launched
+  without `--profile=`) came back as `Electron ./app --remote-debugging-port=9333
+  --profile=default`, and the other account kept running as the same process;
+- with `APPIMAGE` pointed at a missing file, `add-account` returned `ok: true` with
+  `launchError: "spawn … ENOENT"`, switching returned the same error, and the main process stayed
+  up with no uncaught exception;
+- SIGTERM removed each process's pid record; no lock or tmp file was left.
+
+Not verified in a running app for 1.1: the close-to-hide behaviour on Windows/Linux, the tray
+labels, the password window of a background account, whether a running background account stays
+hidden when a restarted first instance fans out again, the updater relaunch, and a real AppImage.
+Their decisions are unit-tested as pure functions.
 
 ## 6. Backing out
 
@@ -221,6 +383,8 @@ The feature does not move or delete any data, and it can be undone without touch
 # the registry lives beside the data directories, e.g. on macOS:
 #   ~/Library/Application Support/Session-accounts*.json
 # deleting it makes Session behave exactly as it did before
+# (also beside it, and safe to delete: Session-accounts*.json.corrupt-*, a stale
+#  Session-accounts*.json.lock directory; inside each account directory: session-account.pid)
 ```
 
 Deleting the registry is safe and complete: without it, Session resolves the default account and
@@ -228,5 +392,5 @@ therefore the directory it has always used. Any extra per-account directories ar
 
 ```
 git checkout dev
-git branch -D feature/call-fullscreen-and-screenshare
+git branch -D multi-account
 ```

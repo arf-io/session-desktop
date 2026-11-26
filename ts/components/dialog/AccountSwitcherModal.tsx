@@ -30,6 +30,8 @@ const CURRENT = 'This window';
 const RUNNING_LABEL = 'Keep running in the background';
 const FORGET = 'Remove from this list';
 const RENAME = 'Rename';
+const NOT_SAVED = 'Could not save the change to the account list.';
+const NOT_STARTED = 'Could not start that account';
 
 const Container = styled.div`
   display: flex;
@@ -147,7 +149,9 @@ function shortSessionId(sessionId: string | null) {
 const AccountRow = ({ account, onChanged }: { account: AccountSummary; onChanged: () => void }) => {
   const toggleBackground = (checked: boolean) => {
     async function run() {
-      await setAccountRunInBackground(account.id, checked);
+      if (!(await setAccountRunInBackground(account.id, checked))) {
+        ToastUtils.pushToastError('accountNotSaved', NOT_SAVED);
+      }
       onChanged();
     }
     void run();
@@ -163,7 +167,9 @@ const AccountRow = ({ account, onChanged }: { account: AccountSummary; onChanged
       return;
     }
     async function run() {
-      await renameAccount(account.id, next as string);
+      if (!(await renameAccount(account.id, next as string))) {
+        ToastUtils.pushToastError('accountNotSaved', NOT_SAVED);
+      }
       onChanged();
     }
     void run();
@@ -177,6 +183,8 @@ const AccountRow = ({ account, onChanged }: { account: AccountSummary; onChanged
           'accountForgotten',
           `Removed from the list. Its data is still on disk at ${result.dataDir}`
         );
+      } else {
+        ToastUtils.pushToastError('accountNotForgotten', result.reason || NOT_SAVED);
       }
       onChanged();
     }
@@ -187,7 +195,13 @@ const AccountRow = ({ account, onChanged }: { account: AccountSummary; onChanged
     if (account.isCurrent) {
       return;
     }
-    void switchToAccount(account.id);
+    async function run() {
+      const result = await switchToAccount(account.id);
+      if (!result.ok) {
+        ToastUtils.pushToastError('accountNotStarted', `${NOT_STARTED}: ${result.error}`);
+      }
+    }
+    void run();
   };
 
   return (
@@ -277,6 +291,9 @@ export const AccountSwitcherModal = () => {
     async function load() {
       try {
         const result = await getAccounts();
+        if (result.error) {
+          ToastUtils.pushToastError('accountsNotRead', result.error);
+        }
         setAccounts(result.accounts);
       } catch (e) {
         window.log?.warn('AccountSwitcherModal could not list accounts:', e?.message);
@@ -296,7 +313,12 @@ export const AccountSwitcherModal = () => {
 
   const onAddAccount = () => {
     async function run() {
-      await addAccount();
+      const result = await addAccount();
+      if (!result.ok) {
+        ToastUtils.pushToastError('accountNotAdded', `Could not add an account: ${result.error}`);
+      } else if (result.launchError) {
+        ToastUtils.pushToastError('accountNotStarted', `${NOT_STARTED}: ${result.launchError}`);
+      }
       refresh();
     }
     void run();

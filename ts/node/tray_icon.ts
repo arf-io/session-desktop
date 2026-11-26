@@ -8,7 +8,11 @@ let trayContextMenu = null;
 let tray: Tray | null = null;
 let trayAny: any;
 
-export function createTrayIcon(getMainWindow: () => BrowserWindow | null) {
+export function createTrayIcon(
+  getMainWindow: () => BrowserWindow | null,
+  // which account this process is, so several accounts' tray icons can be told apart
+  getAccountLabel: () => string | null = () => null
+) {
   // keep the duplicated part to allow for search and find
   const iconFile = process.platform === 'darwin' ? 'session_icon_16.png' : 'session_icon_32.png';
   const iconNoNewMessages = path.join(getAppRootPath(), 'images', 'session', iconFile);
@@ -46,7 +50,12 @@ export function createTrayIcon(getMainWindow: () => BrowserWindow | null) {
     // context menu, since the 'click' event may not work on all platforms.
     // For details please refer to:
     // https://github.com/electron/electron/blob/master/docs/api/tray.md.
+    const accountLabel = getAccountLabel();
+    trayAny.setToolTip(
+      accountLabel ? `${tEnglish('appName')} - ${accountLabel}` : tEnglish('appName')
+    );
     trayContextMenu = Menu.buildFromTemplate([
+      ...(accountLabel ? [{ id: 'account', label: accountLabel, enabled: false }] : []),
       {
         id: 'toggleWindowVisibility',
         label: mainWindow?.isVisible() ? tr('hide') : tr('show'),
