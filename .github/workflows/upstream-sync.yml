@@ -1,0 +1,225 @@
+# Session, but Better — keep up with session-foundation/session-desktop.
+#
+# A fork receives no events when upstream pushes, so this polls. Every run:
+#   1. fast-forwards our `dev` to upstream/dev (a pure mirror; it never carries our code)
+#   2. for each of our branches, merges upstream (plus that branch's other sources) on
+#      `upstream-sync/<branch>`, then builds, tests and lints exactly as upstream CI does
+#   3. only if the merge conflicts or a check fails, a Claude agent resolves/fixes it
+#   4. opens (or updates) a PR into the branch; nothing is ever pushed to our branches directly
+#
+# Secrets:
+#   SYNC_TOKEN         fine-grained PAT on this repo: Contents, Pull requests, Workflows = read/write.
+#                      (GITHUB_TOKEN cannot push upstream commits that touch .github/workflows.)
+#   ANTHROPIC_API_KEY  or CLAUDE_CODE_OAUTH_TOKEN, for the agent step.
+#
+# Scheduled workflows only run from the default branch, so this file lives on session-but-better,
+# which is the repository's default branch.
+name: Upstream sync
+
+on:
+  schedule:
+    - cron: "*/15 * * * *"
+  workflow_dispatch:
+    inputs:
+      only:
+        description: "Sync only this branch (blank = all)"
+        required: false
+        default: ""
+
+concurrency:
+  group: upstream-sync
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+  pull-requests: write
+  id-token: write
+
+env:
+  FSC_TRACK_BRANCH: calls/fullscreen-sharing-1.18.5
+
+jobs:
+  mirror:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 5
+    outputs:
+      upstream_sha: ${{ steps.up.outputs.sha }}
+    steps:
+      - uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.SYNC_TOKEN }}
+      - name: Fast-forward dev to upstream/dev
+        run: bash .github/sbb/upstream-sync.sh mirror
+      - id: up
+        run: echo "sha=$(git rev-parse upstream/dev)" >> "$GITHUB_OUTPUT"
+
+  sync:
+    needs: mirror
+    runs-on: ubuntu-22.04
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      max-parallel: 1 # session-but-better merges the other two, so let them go first
+      matrix:
+        target: [full-screen-chat, multi-account, session-but-better]
+    env:
+      TARGET: ${{ matrix.target }}
+      GH_TOKEN: ${{ secrets.SYNC_TOKEN }}
+    steps:
+      - name: Skip if not selected
+        id: sel
+        run: |
+          only="${{ github.event.inputs.only }}"
+          if [ -n "$only" ] && [ "$only" != "$TARGET" ]; then echo "run=false" >> "$GITHUB_OUTPUT"; else echo "run=true" >> "$GITHUB_OUTPUT"; fi
+
+      - uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5
+        if: steps.sel.outputs.run == 'true'
+        with:
+          ref: ${{ matrix.target }}
+          fetch-depth: 0
+          submodules: recursive
+          token: ${{ secrets.SYNC_TOKEN }}
+
+      - name: Identity
+        if: steps.sel.outputs.run == 'true'
+        run: |
+          git config user.name "session-but-better-sync[bot]"
+          git config user.email "session-but-better-sync@users.noreply.github.com"
+          git config rerere.enabled true
+
+      - name: Merge upstream into upstream-sync/${{ matrix.target }}
+        id: prep
+        if: steps.sel.outputs.run == 'true'
+        # the script lives on the default branch; run that copy whatever branch is checked out
+        run: |
+          git show "origin/${{ github.event.repository.default_branch }}:.github/sbb/upstream-sync.sh" > "$RUNNER_TEMP/upstream-sync.sh"
+          bash "$RUNNER_TEMP/upstream-sync.sh" prepare "$TARGET"
+
+      - name: Setup toolchain
+        if: steps.prep.outputs.status == 'merged' || steps.prep.outputs.status == 'conflict'
+        uses: ./actions/setup
+        with:
+          cache_suffix: "linux_x64"
+
+      - name: Build, test, lint (as upstream CI)
+        id: verify
+        if: steps.prep.outputs.status == 'merged'
+        continue-on-error: true
+        run: |
+          set -o pipefail
+          { pnpm run build && pnpm run test && pnpm run lint && git diff --exit-code; } 2>&1 | tee "$RUNNER_TEMP/verify.log"
+
+      - name: Agent — resolve conflicts / fix failures
+        id: agent
+        if: steps.prep.outputs.status == 'conflict' || steps.verify.outcome == 'failure'
+        continue-on-error: true
+        uses: anthropics/claude-code-action@v1
+        with:
+          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          github_token: ${{ secrets.SYNC_TOKEN }}
+          claude_args: >-
+            --max-turns 150
+            --allowedTools "Bash(git:*),Bash(pnpm:*),Bash(npx:*),Bash(node:*),Bash(cat:*),Bash(ls:*),Bash(grep:*),Bash(sed:*),Bash(head:*),Bash(tail:*),Read,Edit,Write,Glob,Grep"
+          prompt: |
+            You are the upstream-sync agent for "Session, but Better", a fork of
+            session-foundation/session-desktop. The working tree is branch upstream-sync/${{ matrix.target }}.
+
+            Situation: ${{ steps.prep.outputs.status == 'conflict' && format('merging {0} into it stopped with conflicts (see `git status`).', steps.prep.outputs.conflict_source) || 'the merge succeeded but build/test/lint failed; the log is at $RUNNER_TEMP/verify.log.' }}
+            Sources still to merge after this one, in order: ${{ steps.prep.outputs.sources }}
+
+            What our branches add on top of upstream (read docs/TDD-*.md on the branch for the design):
+            - full-screen-chat: real fullscreen calls and window/screen sharing (upstream PR #2065).
+            - multi-account: multiple live accounts, one process + data directory per account
+              (ts/node/config/profiles.ts, ts/util/accounts.ts, AccountSwitcherModal, main_node.ts).
+            - session-but-better: both of the above.
+
+            Rules — full compatibility with upstream is the priority:
+            1. Upstream wins. Take upstream's version of anything it changed, then re-apply our
+               feature on top of it with the smallest change that keeps the feature working.
+            2. Never change wire formats, protobufs, message/call signalling, database schema or
+               migrations, or anything an unmodified upstream Session client must understand.
+            3. Do not touch files outside the conflict/failure unless strictly required. Do not
+               delete or weaken tests; fix the code. Submodule pointers: take upstream's.
+            4. Finish every merge: resolve, `git add`, `git commit --no-edit`; then merge each remaining
+               source listed above the same way (`git merge --no-ff --no-edit <source>`), skipping any
+               already contained in HEAD.
+            5. Verify with: pnpm run build && pnpm run test && pnpm run lint && git diff --exit-code
+               Commit any fixes. Do NOT push and do NOT rewrite history (no rebase, reset, amend).
+            6. If you cannot make it green without breaking rule 1 or 2, stop, leave everything
+               committed, and write the reason to $RUNNER_TEMP/agent-notes.md.
+            Always end by writing a short summary of what you changed and why to $RUNNER_TEMP/agent-notes.md.
+
+      - name: Re-verify after agent
+        id: reverify
+        if: steps.agent.outcome != 'skipped' && steps.agent.outcome != ''
+        continue-on-error: true
+        run: |
+          set -o pipefail
+          bash "$RUNNER_TEMP/upstream-sync.sh" check
+          { pnpm run build && pnpm run test && pnpm run lint && git diff --exit-code; } 2>&1 | tee "$RUNNER_TEMP/verify.log"
+
+      - name: Push sync branch and open / update PR
+        if: steps.prep.outputs.status == 'merged' || steps.prep.outputs.status == 'conflict'
+        run: |
+          set -euo pipefail
+          sync="${{ steps.prep.outputs.sync_branch }}"
+          short=$(git rev-parse --short "${{ steps.prep.outputs.upstream_sha }}")
+
+          green=false
+          if [ "${{ steps.prep.outputs.status }}" = merged ] && [ "${{ steps.verify.outcome }}" = success ]; then green=true; fi
+          if [ "${{ steps.reverify.outcome }}" = success ]; then green=true; fi
+
+          # an unresolved merge can't be pushed; record it so a human sees it
+          if ! bash "$RUNNER_TEMP/upstream-sync.sh" check; then
+            git merge --abort 2>/dev/null || true
+            green=false
+            echo "Merge could not be resolved automatically; the sync branch holds only the clean merges before it." >> "$RUNNER_TEMP/agent-notes.md"
+          fi
+
+          if [ "$(git rev-list --count "origin/$TARGET..HEAD")" = 0 ]; then
+            # nothing mergeable at all: say so in an issue rather than a PR with no commits
+            title="Upstream sync blocked: ${TARGET} vs upstream ${short}"
+            num=$(gh issue list --state open --search "in:title \"Upstream sync blocked: ${TARGET}\"" --json number --jq '.[0].number')
+            body="Merging \`${{ steps.prep.outputs.conflict_source }}\` into \`${TARGET}\` conflicts and the agent could not resolve it.
+          $(cat "$RUNNER_TEMP/agent-notes.md" 2>/dev/null)
+
+          Run: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+            gh label create needs-human --color B60205 --force >/dev/null 2>&1 || true
+            if [ -n "$num" ]; then gh issue comment "$num" --body "$body"; else gh issue create --title "$title" --label needs-human --body "$body"; fi
+            exit 1
+          fi
+
+          git push origin "HEAD:refs/heads/$sync"   # never --force
+
+          {
+            echo "Automated merge of upstream \`session-foundation/session-desktop@${short}\` into \`${TARGET}\`."
+            echo
+            echo "Sources: \`${{ steps.prep.outputs.sources }}\`"
+            echo
+            if $green; then echo "✅ build, unit tests and lint pass (same commands as upstream CI)."
+            else echo "❌ **Needs a human**: still failing or unresolved after the agent. Log tail below."; fi
+            if [ -s "$RUNNER_TEMP/agent-notes.md" ]; then echo; echo "### Agent notes"; cat "$RUNNER_TEMP/agent-notes.md"; fi
+            if ! $green && [ -s "$RUNNER_TEMP/verify.log" ]; then echo; echo '```'; tail -n 60 "$RUNNER_TEMP/verify.log"; echo '```'; fi
+            echo
+            echo "Run: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+          } > "$RUNNER_TEMP/pr-body.md"
+
+          title="Sync upstream ${short} into ${TARGET}"
+          existing=$(gh pr list --head "$sync" --base "$TARGET" --state open --json number --jq '.[0].number')
+          if [ -n "$existing" ]; then
+            gh pr edit "$existing" --title "$title" --body-file "$RUNNER_TEMP/pr-body.md"
+            pr="$existing"
+          else
+            draft=(); $green || draft=(--draft)
+            pr=$(gh pr create --head "$sync" --base "$TARGET" --title "$title" --body-file "$RUNNER_TEMP/pr-body.md" "${draft[@]}" | sed 's#.*/##')
+          fi
+          gh label create needs-human --color B60205 --force >/dev/null 2>&1 || true
+          if $green; then
+            gh pr edit "$pr" --remove-label needs-human >/dev/null 2>&1 || true
+            gh pr ready "$pr" >/dev/null 2>&1 || true
+          else
+            gh pr edit "$pr" --add-label needs-human
+            exit 1   # surface the failure on the run, too
+          fi
