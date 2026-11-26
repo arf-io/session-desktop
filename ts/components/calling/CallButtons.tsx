@@ -250,6 +250,17 @@ const StyledCallActionButton = styled.div<{ $isFullScreen: boolean }>`
   }
 `;
 
+/**
+ * The background our call buttons share with upstream's camera and microphone buttons
+ * (DropDownAndToggleButton). Fullscreen needs one too: its icon is black, so on the black call
+ * view a transparent button would be invisible.
+ */
+export function callButtonBackground(isFullScreen: boolean) {
+  return isFullScreen
+    ? 'var(--call-buttons-action-background-color)'
+    : 'var(--call-buttons-background-color)';
+}
+
 const callButtonStyle = {
   width: '60px',
   height: '60px',
@@ -269,7 +280,7 @@ export const ShowInFullScreenButton = ({ isFullScreen }: { isFullScreen: boolean
           dispatch(setFullScreenCall(!isFullScreen));
         }}
         iconColor={isFullScreen ? 'var(--black-color)' : 'var(--call-buttons-icon-color)'}
-        backgroundColor={isFullScreen ? undefined : 'var(--call-buttons-background-color)'}
+        backgroundColor={callButtonBackground(isFullScreen)}
         margin="10px"
         title={tr('fullScreenToggle')}
         ariaLabel={tr('fullScreenToggle')}
@@ -370,7 +381,7 @@ export const ScreenShareButton = ({
                 ? 'var(--black-color)'
                 : 'var(--call-buttons-icon-color)'
           }
-          backgroundColor={isFullScreen ? undefined : 'var(--call-buttons-background-color)'}
+          backgroundColor={callButtonBackground(isFullScreen)}
           margin="10px"
           title={label}
           ariaLabel={label}
