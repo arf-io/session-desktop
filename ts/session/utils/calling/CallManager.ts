@@ -85,6 +85,11 @@ export type CallManagerOptionsType = {
    * Always false when talking to a client which does not send the `screenShare` field.
    */
   isRemoteScreenSharing: boolean;
+  /**
+   * True from the moment a share is asked for until it is running or has failed: the share
+   * button is disabled meanwhile, so a second request cannot clear the first one's selection.
+   */
+  isScreenSharePending: boolean;
 };
 
 export type CallManagerListener = ((options: CallManagerOptionsType) => void) | null;
@@ -111,6 +116,7 @@ function callVideoListeners() {
         currentSelectedAudioOutput: selectedAudioOutputId,
         isScreenSharing,
         isRemoteScreenSharing: remoteIsScreenSharing,
+        isScreenSharePending: pendingShare !== null,
       });
     });
   }
@@ -354,6 +360,7 @@ export async function startScreenShare(sourceId: string | null) {
     return;
   }
   pendingShare = change.id;
+  callVideoListeners();
   try {
     if (sourceId !== null) {
       const accepted = await setScreenShareSource(sourceId);
@@ -402,6 +409,7 @@ export async function startScreenShare(sourceId: string | null) {
   } finally {
     if (pendingShare === change.id) {
       pendingShare = null;
+      callVideoListeners();
     }
   }
 }

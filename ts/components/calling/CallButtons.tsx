@@ -1,4 +1,4 @@
-import { MouseEvent, useEffect, useState } from 'react';
+import { MouseEvent, useEffect, useId, useState } from 'react';
 import { contextMenu } from 'react-contexify';
 import { useSelector } from 'react-redux';
 import styled from 'styled-components';
@@ -294,7 +294,18 @@ export const ScreenShareButton = ({
 }) => {
   const [pickerOpen, setPickerOpen] = useState(false);
   const [mode, setMode] = useState<ScreenShareMode | null>(null);
+  const [pending, setPending] = useState(false);
+  const listenerId = `ScreenShareButton-${useId()}`;
   const label = isScreenSharing ? tr('callsStopSharing') : tr('callsShareScreen');
+
+  useEffect(() => {
+    CallManager.addVideoEventsListener(listenerId, options => {
+      setPending(options.isScreenSharePending);
+    });
+    return () => {
+      CallManager.removeVideoEventsListener(listenerId);
+    };
+  }, [listenerId]);
 
   useEffect(() => {
     let mounted = true;
@@ -341,6 +352,9 @@ export const ScreenShareButton = ({
               void CallManager.stopScreenShare();
               return;
             }
+            if (pending) {
+              return;
+            }
             if (mode === 'portal') {
               // the OS shows its own picker, from inside getDisplayMedia()
               void CallManager.startScreenShare(null);
@@ -348,7 +362,7 @@ export const ScreenShareButton = ({
             }
             setPickerOpen(true);
           }}
-          disabled={!isScreenSharing && mode === null}
+          disabled={!isScreenSharing && (mode === null || pending)}
           iconColor={
             isScreenSharing
               ? 'var(--danger-color)'
