@@ -55,6 +55,31 @@ every other branch.
   and so is "exit fullscreen when the peer's video mutes".
 - **macOS:** the first share triggers the Screen Recording permission prompt. If macOS refuses to
   list sources, the picker links to the right System Settings pane.
+- **Wayland (GNOME, KDE): the desktop portal picks.** On Linux, when `XDG_SESSION_TYPE` starts
+  with `wayland` and `WAYLAND_DISPLAY` is set (the same test WebRTC uses to capture through
+  xdg-desktop-portal), `desktopCapturer.getSources()` opens the portal's own dialog and returns
+  only the chosen source. Main detects this and tells the renderer (`get-screen-share-mode`).
+  In this mode the share button skips Session's picker and calls `getDisplayMedia()` directly. The
+  display-media handler asks the portal once (no thumbnails) and grants its source. If the portal
+  returns nothing or is cancelled, the share is declined quietly. The frame, user-gesture, audio and
+  `mediaPermissions` checks still apply, and the listing and selection IPC refuse, so nothing else
+  opens the portal. X11, Windows and macOS keep Session's picker.
+- **The camera button during a share.** A share holds the call's only video sender, so no camera
+  is live while it runs. The camera button shows the camera that comes back when the share ends.
+  Sharing with the camera off therefore shows "off". Pressing the camera button or picking a camera
+  from its menu during a share only changes that camera; the share keeps running, and the chosen
+  camera starts when the share stops. The local preview keeps showing the shared screen.
+- **Declined shares are explained.** If main declines a share the user did not cancel (selection
+  older than 5 s or cleared by a navigation, no user gesture, calls permission or macOS Screen
+  Recording access withdrawn, a source no longer on offer), it records why
+  (`take-screen-share-refusal`), and the renderer shows a toast using existing strings. A cancel
+  in the desktop portal records nothing and stays silent.
+- **Outgoing share capped at 1920×1080 and 30 fps.** Unmodified peers, often phones, receive the
+  share as ordinary camera video. After `getDisplayMedia()` the track gets upper bounds only
+  (`width ≤ 1920`, `height ≤ 1080`, `frameRate ≤ 30`), so Chromium scales it down and keeps the
+  aspect ratio. If they can't be applied, the share runs uncapped. `contentHint` stays `detail`.
+- **One share at a time.** The share button is disabled while a share is starting, so reopening
+  the picker can't clear the first share's selection.
 - `display-capture` is granted only under the same setting calls already require
   (`mediaPermissions`).
 
@@ -62,35 +87,63 @@ every other branch.
 
 | File                                                        | Change                                                                                         |
 | ----------------------------------------------------------- | ---------------------------------------------------------------------------------------------- |
-| `ts/components/calling/CallButtons.tsx`                     | fullscreen and share buttons, labelled, always shown in a call                                 |
-| `ts/components/calling/CallInFullScreenContainer.tsx`       | real fullscreen, exit pill, fit-to-frame for shared screens                                    |
+| `ts/components/calling/CallButtons.tsx`                     | fullscreen and share buttons, labelled, always shown in a call; portal mode; pending disable   |
+| `ts/components/calling/CallInFullScreenContainer.tsx`       | real fullscreen, exit pill, fit-to-frame for shared screens, preview while sharing             |
 | `ts/components/calling/DraggableCallContainer.tsx`          | no exit-fullscreen side effects                                                                |
-| `ts/components/calling/InConversationCallContainer.tsx`     | as above                                                                                       |
+| `ts/components/calling/InConversationCallContainer.tsx`     | as above; preview while sharing                                                                |
 | `ts/components/calling/ScreenSharePicker.tsx`               | **new**: the source picker                                                                     |
 | `ts/components/icon/DropDownAndToggleButton.tsx`            | test id passthrough                                                                            |
 | `ts/components/icon/lucide.ts`                              | MINIMIZE, SCREEN_SHARE, SCREEN_SHARE_OFF glyphs                                                |
 | `ts/hooks/useVideoEventListener.ts`                         | fixes a listener that dropped every update on first render                                     |
 | `ts/mains/main_node.ts`                                     | display-media handler and IPC (via `ts/node/screenShare.ts`); no persisting of HTML fullscreen |
-| `ts/node/permissions.ts`                                    | `display-capture` gated on `mediaPermissions`                                                  |
-| `ts/node/screenShare.ts`                                    | **new**: main-process source listing and one-shot source grant                                 |
+| `ts/node/permissions.ts`                                    | `display-capture` gated on `mediaPermissions`; handler exported for its test                   |
+| `ts/node/screenShare.ts`                                    | **new**: source listing, one-shot grant, Wayland portal mode, refusal reasons                  |
 | `ts/react.d.ts`                                             | test ids                                                                                       |
 | `ts/session/utils/calling/CallManager.ts`                   | share via `replaceTrack`, camera restore, `screenShare` status field, `splice` bug fix         |
+| `ts/session/utils/calling/ScreenShare.ts`                   | **new**: status payload, camera-button rule, refusal toasts, outgoing cap                      |
 | `ts/session/utils/calling/Silence.ts`                       | no throw when a call has no audio device                                                       |
-| `ts/util/screenShare.ts`                                    | **new**: renderer IPC wrapper                                                                  |
+| `ts/util/screenShare.ts`                                    | **new**: renderer IPC wrapper, share mode and refusal types                                    |
+| `ts/test/components/ScreenShareButton_test.tsx`             | **new** tests                                                                                  |
 | `ts/test/session/unit/calling/call_duck_test.ts`            | **new** tests                                                                                  |
 | `ts/test/session/unit/calling/call_video_listeners_test.ts` | **new** tests                                                                                  |
+| `ts/test/session/unit/calling/permissions_test.ts`          | **new** tests                                                                                  |
 | `ts/test/session/unit/calling/screen_share_picker_test.ts`  | **new** tests                                                                                  |
+| `ts/test/session/unit/calling/screen_share_state_test.ts`   | **new** tests                                                                                  |
 
 ### Compatibility
 
 - The `screenShare` field is the only wire addition. It is additive, and a receiver that doesn't
   know it still renders the share as ordinary video. **The sync agent must not remove it** when
-  resolving conflicts.
+  resolving conflicts. The status message has exactly the keys `video` and `screenShare` (plus
+  upstream's separate `hangup` message); still one video track, no renegotiation. The portal
+  mode, camera rule, refusal toasts and cap are all local and add nothing to the wire.
 - Strings use existing localized keys (`session-localization` is upstream's and unchanged).
 
 ### Verified
 
-- Unit tests: 16 new, plus upstream's suite (`pnpm test`).
+- Unit tests: 69 new, plus upstream's suite (`pnpm test`). What they cover, and what they
+  don't:
+  - **Main process (`ts/node/screenShare.ts`), every platform path, with a stubbed
+    `desktopCapturer`:** Session's picker (grant once, unknown source, 5 s expiry, late listing,
+    macOS access prompt, restricted access). Navigation clears the selection. Audio, no-video,
+    wrong-frame, wrong-page and no-gesture requests are declined. Wayland detection. In portal
+    mode: grant of `sources[0]` with one `getSources` call and no thumbnails, `null` on empty, on
+    throw and after the page went away, and no listing or selection. Every refusal reason, the
+    read-once rule, and a quiet portal cancel.
+  - **`display-capture` permission:** granted only when `mediaPermissions` is on.
+  - **Decision functions CallManager calls (`ScreenShare.ts`):** the status payload keys, the
+    remote `screenShare` reading (an unmodified client's status means not sharing; a hangup leaves
+    it alone), the camera-button rule, refusal messages and toasts, and the cap constraints on a
+    stubbed track.
+  - **Share button (rendered):** a portal-mode click starts the share without Session's picker;
+    otherwise the picker opens; the button is disabled while a share is pending.
+  - **Not covered by unit tests:** CallManager's data-channel and `replaceTrack` wiring itself
+    (it needs a real `RTCPeerConnection`, which jsdom lacks). In particular, that a camera chosen
+    during a share leaves the share running is only covered through its decision function.
+- **Cap, 2026-11-26** (macOS, Electron 40.0.0 / Chromium 144, a scratch Electron script): the same
+  constraints on a real `getDisplayMedia()` capture of a 1920×1200 display gave 1728×1080 at 30 fps.
+  On canvas tracks, 5120×2880 gave 1920×1080, 1868×1198 gave 1684×1080 and 1200×2400 gave
+  540×1080, all at 30 fps instead of 60.
 - Recorded during the original review: two local WebRTC peers in Electron 40, with the receiver showing a
   synthetic shared window, then the prior camera; camera-off returns to black; cancelling keeps
   the call; a late capture after hang-up is discarded; packaged arm64 macOS app launched.
@@ -113,6 +166,18 @@ every other branch.
   re-tested on this branch; it was covered in the original review only.
 - A share between two physical devices with a real OS-picked window on the current revision is a
   manual check that hasn't been repeated here.
+- **Wayland and Windows have not been run on real machines.** Wayland portal mode is covered by
+  unit tests with a stubbed `desktopCapturer` only. That the portal's `sources[0]` is accepted by
+  `getDisplayMedia()` without a second portal dialog, and how a portal cancel surfaces in Electron
+  40, follow Electron's documented pattern but are unverified. On Windows, Session's picker path
+  is shared with macOS and X11 but has never been run there.
+- The camera-button rule, refusal toasts, cap and pending-disable have not been exercised in a
+  real call yet, and the built app was not launched on this revision; only the cap was measured,
+  in a scratch script.
+- If the calls permission is switched off mid-call, Chromium may refuse `display-capture` before
+  Session's handler runs. That records no reason, so the refusal is silent.
+- A camera chosen while a share is still starting (picker or portal open) cancels that share. The
+  latest choice wins, as before.
 - Calls are one-to-one, as upstream. Group calls are on the backlog.
 
 ---
@@ -133,30 +198,45 @@ original verification record: [`docs/TDD-multi-account.md`](TDD-multi-account.md
   an account that is already running hands its arguments to that process, which focuses its
   window, and exits.
 - Accounts marked **Background** are started, staggered by 1.5 s, by whichever instance the user
-  launched. They run with a hidden window and a tray icon.
+  launched. They run with a hidden window and a tray icon; closing their window hides it on every
+  platform, and a password-protected one waits, locked, without showing its password window until
+  it is asked for. Once there are several accounts, each tray icon is labelled with its account.
+- **Restarting keeps the account.** `app.relaunch()` pins `--profile=<this account>`. The updater's
+  relaunch can't take arguments, so each account process also carries `SESSION_PROFILE=<its id>` in
+  its environment (inherited by the AppImage and NSIS updaters), and the registry's last-used
+  account is set to this one when an update starts installing (for Squirrel.Mac).
 - **The first account is the directory upstream already uses**, so existing installs keep their
   account with no migration.
-- **Removing an account never deletes its data.** The directory is kept and its path is shown.
-- Registry: `<appData>/Session-accounts[-<profile>].json`. It is read from disk on every access,
-  never cached, so processes can't erase each other's changes.
+- **Removing an account never deletes its data.** The directory is kept and its path is shown. An
+  account that is still running can't be removed.
+- Registry: `<appData>/Session-accounts[-<profile>].json`. It is read from disk on every access and
+  changed only under a cross-process lock, so processes can't erase each other's changes. A
+  registry that can't be parsed is kept as `.corrupt-<timestamp>` and rebuilt from the account
+  directories on disk; it is never replaced by an empty default. Failed changes are shown in the
+  switcher.
 
 ### Files
 
-| File                                             | Change                                                                                                                                                                             |
-| ------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `ts/node/config/profiles.ts`                     | **new**: account registry, account-to-directory mapping, selection (`--profile=`, `SESSION_PROFILE`, last used)                                                                    |
-| `ts/node/config/user_config.ts`                  | sets `userData` from the selected account                                                                                                                                          |
-| `ts/mains/main_node.ts`                          | account IPC (`get-accounts`, `switch-account`, `add-account`, …), spawning, background launch; a failed single-instance lock always exits (it used to be exempt for dev instances) |
-| `ts/mains/main_renderer.tsx`                     | reports the signed-in identity so the switcher can label accounts                                                                                                                  |
-| `ts/util/accounts.ts`                            | **new**: renderer IPC wrappers, identity reporting                                                                                                                                 |
-| `ts/components/dialog/AccountSwitcherModal.tsx`  | **new**: the switcher                                                                                                                                                              |
-| `ts/components/dialog/ModalContainer.tsx`        | mounts the switcher                                                                                                                                                                |
-| `ts/components/leftpane/ActionsPanel.tsx`        | Accounts button                                                                                                                                                                    |
-| `ts/state/ducks/modalDialog.tsx`                 | `accountSwitcherModal` state                                                                                                                                                       |
-| `ts/state/selectors/modal.ts`                    | `useAccountSwitcherModal`                                                                                                                                                          |
-| `ts/react.d.ts`                                  | `accounts-section` test id                                                                                                                                                         |
-| `ts/test/session/unit/accounts/profiles_test.ts` | **new**: 10 registry tests                                                                                                                                                         |
-| `docs/TDD-multi-account.md`                      | **new**: design and verification record                                                                                                                                            |
+| File                                                       | Change                                                                                                                                                                                            |
+| ---------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `ts/node/config/profiles.ts`                               | **new**: account registry (locked writes, corrupt-file recovery), account-to-directory mapping, selection (`--profile=`, `SESSION_PROFILE`, last used), running-account record                    |
+| `ts/node/config/account_process.ts`                        | **new**: launching, relaunch arguments, hide-or-quit decision, background reveal, tray label, account IPC                                                                                         |
+| `ts/node/tray_icon.ts`                                     | optional account label in the tray tooltip and menu                                                                                                                                               |
+| `ts/node/config/user_config.ts`                            | sets `userData` from the selected account                                                                                                                                                         |
+| `ts/mains/main_node.ts`                                    | calls into `account_process.ts`: account IPC, background launch, relaunch pinning, hide-on-close, tray label; a failed single-instance lock always exits (it used to be exempt for dev instances) |
+| `ts/mains/main_renderer.tsx`                               | reports the signed-in identity so the switcher can label accounts                                                                                                                                 |
+| `ts/util/accounts.ts`                                      | **new**: renderer IPC wrappers, identity reporting                                                                                                                                                |
+| `ts/components/dialog/AccountSwitcherModal.tsx`            | **new**: the switcher                                                                                                                                                                             |
+| `ts/components/dialog/ModalContainer.tsx`                  | mounts the switcher                                                                                                                                                                               |
+| `ts/components/leftpane/ActionsPanel.tsx`                  | Accounts button                                                                                                                                                                                   |
+| `ts/state/ducks/modalDialog.tsx`                           | `accountSwitcherModal` state                                                                                                                                                                      |
+| `ts/state/selectors/modal.ts`                              | `useAccountSwitcherModal`                                                                                                                                                                         |
+| `ts/react.d.ts`                                            | `accounts-section` test id                                                                                                                                                                        |
+| `ts/test/session/unit/accounts/profiles_test.ts`           | **new**: 17 registry tests                                                                                                                                                                        |
+| `ts/test/session/unit/accounts/registry_processes_test.ts` | **new**: 3 tests across forked processes                                                                                                                                                          |
+| `ts/test/session/unit/accounts/registry_child.ts`          | **new**: the process those tests fork (not a spec)                                                                                                                                                |
+| `ts/test/session/unit/accounts/account_process_test.ts`    | **new**: 14 launch, relaunch and window tests                                                                                                                                                     |
+| `docs/TDD-multi-account.md`                                | **new**: design and verification record                                                                                                                                                           |
 
 ### Compatibility
 
@@ -167,15 +247,26 @@ original verification record: [`docs/TDD-multi-account.md`](TDD-multi-account.md
 
 ### Verified
 
-- 10 unit tests cover the registry:
+- 34 unit tests (2026-11-26; suite 1079 passing, build and lint green):
   - the legacy directory is kept (packaged and dev);
   - every account is isolated;
   - selection order (`--profile=`, `SESSION_PROFILE`, last used);
   - this process's identity never changes;
-  - no cross-process lost update;
   - auto-labels are replaced only until the user renames;
-  - removing keeps data;
-  - an unreadable registry is not overwritten.
+  - removing keeps data, and a running account can't be removed;
+  - 4 forked processes adding at once lose nothing (before the fix, 62 of 100 were lost);
+  - a writer killed while holding the lock doesn't block the next one;
+  - an empty, torn or unparseable registry is kept aside and rebuilt from the account directories,
+    and an unreadable one is never written over;
+  - a failed write is reported, not hidden;
+  - account ids can't reach outside appData;
+  - launch arguments, AppImage, spawn failure, relaunch and updater pinning, hide-or-quit and
+    background reveal.
+- In the running app, 2026-11-26 (macOS, dev build, throwaway home): adding an account spawned it
+  without the parent's debug port; a running account couldn't be removed; unknown and `../x` ids
+  were refused; a restart after another account became last-used came back with
+  `--profile=default`; a missing executable was reported as `ENOENT` with the main process still
+  up; pid records were removed on quit.
 - In the running app, 2026-11-25 (macOS, Electron 40, throwaway profile):
   - the switcher lists accounts with real name and Account ID;
   - inline rename works;
@@ -187,7 +278,12 @@ original verification record: [`docs/TDD-multi-account.md`](TDD-multi-account.md
 
 ### Known limits
 
-- Not yet exercised in a **packaged** build, or on Windows or Linux.
+- Not yet exercised in a **packaged** build, or on Windows or Linux. The 2026-11-26 fixes to
+  hide-on-close, tray labels, background password windows, the updater relaunch and AppImage
+  launches are unit tested but haven't been run in the app.
+- On macOS the updater's relaunch comes back as the last-used account, which is set to the updating
+  account just before; another account becoming last-used in that moment would win. That the NSIS
+  installer passes its environment to the app it starts is unverified.
 - N accounts means N processes and N windows; memory scales with them.
 - No unified inbox: that needs per-account singletons inside one process, which would be a core
   rewrite.
