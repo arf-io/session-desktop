@@ -228,6 +228,7 @@ import { getSimpleStringNoArgs, tr } from '../localization/localeTools';
 
 import { logCrash } from '../node/crash/log_crash';
 import { THEMES } from '../themes/constants/colors';
+import { releaseNotesUrl } from '../shared/release_notes';
 
 function prepareURL(pathSegments: Array<string>, moreKeys?: { theme: string }) {
   const urlObject: url.UrlObject = {
@@ -797,9 +798,7 @@ const TEN_MINUTES = 10 * 60 * 1000;
 setTimeout(readyForUpdates, TEN_MINUTES);
 
 function openReleaseNotes() {
-  void shell.openExternal(
-    `https://github.com/session-foundation/session-desktop/releases/tag/v${app.getVersion()}`
-  );
+  void shell.openExternal(releaseNotesUrl(app.getVersion()));
 }
 
 function openSupportPage() {

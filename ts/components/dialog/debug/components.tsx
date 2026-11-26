@@ -61,6 +61,7 @@ import {
 } from '../../../util/ctaHistory';
 import { CTAVariant } from '../cta/types';
 import { isDevProd } from '../../../shared/env_vars';
+import { releaseNotesUrl } from '../../../shared/release_notes';
 import { getIsProAvailableMemo } from '../../../hooks/useIsProAvailable';
 
 type DebugButtonProps = SessionButtonProps & { shiny?: boolean; hide?: boolean };
@@ -360,9 +361,7 @@ export const DebugActions = () => {
       ) : null}
       <DebugButton
         onClick={() => {
-          void shell.openExternal(
-            `https://github.com/session-foundation/session-desktop/releases/tag/v${window.getVersion()}`
-          );
+          void shell.openExternal(releaseNotesUrl(window.getVersion()));
         }}
       >
         <Localizer token="updateReleaseNotes" />
