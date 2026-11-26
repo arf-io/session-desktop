@@ -107,10 +107,11 @@ upstream merges it, the feature arrives through upstream itself and this section
   - Stopping the share restored the prior camera-off video.
   - Esc left fullscreen and kept the call.
   - Hang-up ended the call on both sides.
-  - Fullscreen was not written to the window config.
 
 ### Known limits
 
+- "Quit while in a fullscreen call, then reopen" (the window-config guard) was not
+  re-tested on this branch; PR #2065 covers it in review only.
 - A share between two physical devices with a real OS-picked window on the current revision is a
   manual check that hasn't been repeated here.
 - Calls are one-to-one, as upstream. Group calls are on the backlog.
@@ -246,10 +247,12 @@ feature, with none of this infrastructure, so each stays a clean candidate for u
 - **Updates come from this fork.** Release builds point electron-builder's update feed at this
   repository's releases (`--config.publish.owner/repo`, set at build time; `package.json` is not
   edited), so an installed Session, but Better never "updates" itself to plain upstream Session.
-- The binary's version string stays upstream's (no `-sbb` suffix inside the app), because the
-  version is reported to the network and drives upstream's release-channel logic. Consequence: two
-  of our releases on the same upstream version don't auto-update to each other. Download the newer
-  one by hand.
+- The binary's version string stays upstream's, with no `-sbb` suffix inside the app. It isn't sent
+  over the network (requests use a fixed User-Agent), but upstream's code compares it locally: the
+  updater's release-channel logic (`ts/updater`) and unsupported-message handling
+  (`ts/session/unsupported_messages`). Keeping it unchanged keeps that behaviour identical.
+  Consequence: two of our releases on the same upstream version don't auto-update to each other.
+  Download the newer one by hand.
 - **macOS builds are unsigned** until a Developer ID certificate is added (`MAC_CERTIFICATE`,
   `MAC_CERTIFICATE_PASSWORD`, `SIGNING_*` secrets). Unsigned apps open with right-click → Open,
   and macOS won't apply auto-updates to them.

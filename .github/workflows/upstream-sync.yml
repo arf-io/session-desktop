@@ -93,7 +93,7 @@ jobs:
         if: steps.sel.outputs.run == 'true'
         # the script lives on the default branch; run that copy whatever branch is checked out
         run: |
-          git show "origin/${{ github.event.repository.default_branch }}:.github/sbb/upstream-sync.sh" > "$RUNNER_TEMP/upstream-sync.sh"
+          git show "origin/session-but-better:.github/sbb/upstream-sync.sh" > "$RUNNER_TEMP/upstream-sync.sh"
           bash "$RUNNER_TEMP/upstream-sync.sh" prepare "$TARGET"
 
       - name: Setup toolchain
@@ -121,12 +121,15 @@ jobs:
           github_token: ${{ secrets.SYNC_TOKEN }}
           claude_args: >-
             --max-turns 150
-            --allowedTools "Bash(git:*),Bash(pnpm:*),Bash(npx:*),Bash(node:*),Bash(cat:*),Bash(ls:*),Bash(grep:*),Bash(sed:*),Bash(head:*),Bash(tail:*),Read,Edit,Write,Glob,Grep"
+            --add-dir ${{ runner.temp }}
+            --allowedTools "Bash(git:*),Bash(pnpm:*),Bash(npx:*),Bash(node:*),Bash(cat:*),Bash(ls:*),Bash(grep:*),Bash(sed:*),Bash(head:*),Bash(tail:*),Bash(bash ${{ runner.temp }}/upstream-sync.sh:*),Read,Edit,Write,Glob,Grep"
+            --disallowedTools "Bash(git push:*),Bash(git rebase:*),Bash(git reset:*),Bash(git commit --amend:*)"
           prompt: |
             You are the upstream-sync agent for "Session, but Better", a fork of
             session-foundation/session-desktop. The working tree is branch upstream-sync/${{ matrix.target }}.
 
-            Situation: ${{ steps.prep.outputs.status == 'conflict' && format('merging {0} into it stopped with conflicts (see `git status`).', steps.prep.outputs.conflict_source) || 'the merge succeeded but build/test/lint failed; the log is at $RUNNER_TEMP/verify.log.' }}
+            Situation: ${{ steps.prep.outputs.status == 'conflict' && format('merging {0} into it stopped with conflicts (see `git status`).', steps.prep.outputs.conflict_source) || 'the merge succeeded but build/test/lint failed.' }}
+            Verify log (if any): ${{ runner.temp }}/verify.log
             Sources still to merge after this one, in order: ${{ steps.prep.outputs.sources }}
 
             What our branches add on top of upstream (read docs/TDD-*.md on the branch for the design):
@@ -153,11 +156,11 @@ jobs:
             5. Commit messages must pass the repo's commitlint (conventional, lower-case subject),
                e.g. "fix(sync): keep account switcher working after upstream modal refactor".
                Verify with: pnpm run build && pnpm run test && pnpm run lint && git diff --exit-code
-               && bash $RUNNER_TEMP/upstream-sync.sh check-docs
+               && bash ${{ runner.temp }}/upstream-sync.sh check-docs
                Commit any fixes. Do NOT push and do NOT rewrite history (no rebase, reset, amend).
             6. If you cannot make it green without breaking rule 1 or 2, stop, leave everything
-               committed, and write the reason to $RUNNER_TEMP/agent-notes.md.
-            Always end by writing a short summary of what you changed and why to $RUNNER_TEMP/agent-notes.md.
+               committed, and write the reason to ${{ runner.temp }}/agent-notes.md.
+            Always end by writing a short summary of what you changed and why to ${{ runner.temp }}/agent-notes.md.
 
       - name: Re-verify after agent
         id: reverify

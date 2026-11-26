@@ -11,8 +11,9 @@ and adds:
 
 It stays **fully compatible with upstream Session**: same network, same protocol, same database.
 You can message and call anyone on upstream Session, and moving between upstream Session and
-Session, but Better keeps your account. Upstream changes are merged automatically, usually within
-15 minutes of landing upstream.
+Session, but Better keeps your account. Upstream changes are proposed automatically as pull requests,
+checked with upstream's own build and tests, within about 15 minutes of landing upstream; they are
+merged after review.
 
 > Session, but Better is an independent fork, not a product of the Session Technology Foundation.
 > Please report problems with these builds here, not to upstream.
