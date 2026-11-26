@@ -394,8 +394,24 @@ describe('screen share refusal reasons', () => {
     const picker = await picked();
     picker.setMediaPermissions(false);
     assert.isNull(picker.requestDisplay());
-    picker.setMediaPermissions(true);
     assert.strictEqual(await picker.refusal(), 'no-permission');
+  });
+
+  it('records a pick made after the calls permission was turned off', async () => {
+    const picker = setup();
+    await picker.listSources();
+    picker.setMediaPermissions(false);
+    assert.isFalse(await picker.pick('screen:1'));
+    assert.strictEqual(await picker.refusal(), 'no-permission');
+  });
+
+  it('does not hand a reason to another frame', async () => {
+    const clock = Sinon.useFakeTimers({ now: 1_000_000 });
+    const picker = await picked();
+    clock.tick(5001);
+    picker.requestDisplay();
+    (picker.mainFrame as { url: string }).url = 'file:///session/other.html';
+    assert.isNull(await picker.refusal());
   });
 
   it('records a pick of a source that is no longer on offer', async () => {

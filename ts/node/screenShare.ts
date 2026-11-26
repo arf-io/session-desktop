@@ -63,13 +63,8 @@ export function installScreenSharePicker(
     selection = null;
   }
 
-  function allowed(frame: WebFrameMain | null) {
-    if (
-      !frame ||
-      contents.isDestroyed() ||
-      frame !== contents.mainFrame ||
-      !config.get('mediaPermissions')
-    ) {
+  function onSessionPage(frame: WebFrameMain | null): frame is WebFrameMain {
+    if (!frame || contents.isDestroyed() || frame !== contents.mainFrame) {
       return false;
     }
     const current = new URL(frame.url);
@@ -78,6 +73,10 @@ export function installScreenSharePicker(
       current.host === page.host &&
       current.pathname === page.pathname
     );
+  }
+
+  function allowed(frame: WebFrameMain | null) {
+    return onSessionPage(frame) && Boolean(config.get('mediaPermissions'));
   }
 
   function refusalFor(frame: WebFrameMain | null): ScreenShareRefusal {
@@ -168,7 +167,8 @@ export function installScreenSharePicker(
   contents.ipc.handle('take-screen-share-refusal', event => {
     const reason = refusal;
     refusal = null;
-    return allowed(event.senderFrame) ? reason : null;
+    // not allowed(): the reason may be that the calls permission was turned off
+    return onSessionPage(event.senderFrame) ? reason : null;
   });
 
   contents.ipc.handle('open-screen-recording-settings', async event => {
