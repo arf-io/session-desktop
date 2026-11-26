@@ -1,18 +1,20 @@
-# Session, but Better — build Windows, macOS and Linux for a v*-sbb.* tag and publish the Release.
+# Session, but Better — build Windows, macOS and Linux for a v*-better tag and publish the Release.
 #
 # Same build steps as upstream CI (actions/setup, pnpm build, unit tests, electron-builder), with
-# one difference: the update feed baked into the app points at THIS repository's releases, so an
-# installed Session, but Better never updates itself to plain upstream Session. package.json is
+# one difference: the update feed baked into the app points at the public release repository,
+# arf-io/session-desktop (override with the RELEASE_OWNER / RELEASE_REPO repository variables), so
+# an installed Session, but Better never updates itself to plain upstream Session. Releases there
+# must be regular releases, not prereleases: the in-app updater follows GitHub's "latest release". package.json is
 # not edited; the feed is set on the electron-builder command line.
 name: Release
 
 on:
   push:
-    tags: ['v*-sbb.*']
+    tags: ['v*-better', 'v*-better.*']
   workflow_dispatch:
     inputs:
       tag:
-        description: 'Existing tag to (re)build, e.g. v1.18.5-sbb.1'
+        description: 'Existing tag to (re)build, e.g. v1.18.5-better'
         required: true
 
 concurrency:
@@ -27,8 +29,8 @@ env:
   GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
   FEED: >-
     --config.publish.provider=github
-    --config.publish.owner=${{ github.repository_owner }}
-    --config.publish.repo=${{ github.event.repository.name }}
+    --config.publish.owner=${{ vars.RELEASE_OWNER || 'arf-io' }}
+    --config.publish.repo=${{ vars.RELEASE_REPO || 'session-desktop' }}
 
 jobs:
   create_release:

@@ -204,14 +204,14 @@ original verification record: [`docs/TDD-multi-account.md`](TDD-multi-account.md
 
 ## 3. Fork infrastructure (`session-but-better` only)
 
-| File                                  | Purpose                                                                               |
-| ------------------------------------- | ------------------------------------------------------------------------------------- |
-| `README.md`                           | this fork's README                                                                    |
-| `docs/MODIFICATIONS.md`               | this document                                                                         |
-| `.github/workflows/upstream-sync.yml` | polls upstream every 15 min; mirror, merge, verify, agent, PR                         |
-| `.github/sbb/upstream-sync.sh`        | the sync logic (`mirror`, `prepare`, `check`, `check-docs`)                           |
-| `.github/workflows/sbb-release.yml`   | builds Windows, macOS and Linux for a `v*-sbb.*` tag and publishes the GitHub Release |
-| `.github/workflows/sbb-tag.yml`       | tags every new product version on `session-but-better`                                |
+| File                                  | Purpose                                                                                |
+| ------------------------------------- | -------------------------------------------------------------------------------------- |
+| `README.md`                           | this fork's README                                                                     |
+| `docs/MODIFICATIONS.md`               | this document                                                                          |
+| `.github/workflows/upstream-sync.yml` | polls upstream every 15 min; mirror, merge, verify, agent, PR                          |
+| `.github/sbb/upstream-sync.sh`        | the sync logic (`mirror`, `prepare`, `check`, `check-docs`)                            |
+| `.github/workflows/sbb-release.yml`   | builds Windows, macOS and Linux for a `v*-better` tag and publishes the GitHub Release |
+| `.github/workflows/sbb-tag.yml`       | tags every new product version on `session-but-better`                                 |
 
 The feature branches `full-screen-chat` and `multi-account` carry only upstream plus their own
 feature, with none of this infrastructure, so each stays a clean candidate for upstream.
@@ -234,20 +234,35 @@ feature, with none of this infrastructure, so each stays a clean candidate for u
 
 ### Releases
 
-- **Every version of ours is tagged** `v<upstream version>-sbb.<n>`, for example `v1.18.5-sbb.1`.
-  `<n>` starts at 1 for each upstream version and goes up with each of our releases on that base.
-  `sbb-tag.yml` creates the tag automatically whenever `session-but-better` gains code changes
-  (doc-only and CI-only changes are not tagged). Each tag is annotated with the upstream base and
-  the feature heads it contains.
+- **Every version of ours is tagged** with upstream's version tag plus `-better`. The first release
+  on upstream 1.18.5 is `v1.18.5-better`; further releases on the same upstream version are
+  `v1.18.5-better.2`, `.3`, and so on. `sbb-tag.yml` creates the tag automatically whenever
+  `session-but-better` gains code changes (doc-only and CI-only changes are not tagged). Each tag
+  is annotated with the upstream base and the feature heads it contains.
+- **Where releases live.** Public releases, with clean and sanitized commits, are published on
+  [arf-io/session-desktop](https://github.com/arf-io/session-desktop). The development
+  repository (arf-io/session-desktop) is the private working copy.
 - `sbb-release.yml` builds on a new tag:
   - Windows: x64 NSIS installer;
   - macOS: arm64 and x64 DMG and zip;
   - Linux: deb, rpm and AppImage.
     It then attaches everything to the GitHub Release for that tag.
-- **Updates come from this fork.** Release builds point electron-builder's update feed at this
-  repository's releases (`--config.publish.owner/repo`, set at build time; `package.json` is not
-  edited), so an installed Session, but Better never "updates" itself to plain upstream Session.
-- The binary's version string stays upstream's, with no `-sbb` suffix inside the app. It isn't sent
+- **The in-app updater points at arf-io/session-desktop.** Release builds set electron-builder's
+  update feed at build time (`--config.publish.owner/repo`, default `arf-io/session-desktop`,
+  overridable with the `RELEASE_OWNER` / `RELEASE_REPO` repository variables); `package.json` is
+  not edited. An installed Session, but Better therefore never "updates" itself to plain upstream
+  Session. How an update is found, unchanged from upstream:
+
+  1. Session's file server reports the newest Session version (onion-routed).
+  2. Only if it is newer than the running version does electron-updater ask GitHub.
+  3. With a plain version like `1.18.5`, electron-updater follows GitHub's **latest release**: the
+     newest release that is neither a draft nor a prerelease, whatever its tag is called. It reads
+     `latest.yml` / `latest-linux.yml` from that release.
+
+  So releases on arf-io must be published as regular releases, **not prereleases**. An update is
+  offered once the `-better` release for the new upstream version is published.
+
+- The binary's version string stays upstream's, with no `-better` suffix inside the app. It isn't sent
   over the network (requests use a fixed User-Agent), but upstream's code compares it locally: the
   updater's release-channel logic (`ts/updater`) and unsupported-message handling
   (`ts/session/unsupported_messages`). Keeping it unchanged keeps that behaviour identical.

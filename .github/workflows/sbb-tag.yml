@@ -1,7 +1,8 @@
 # Session, but Better — tag every new version of ours.
 #
-# Whenever session-but-better gains code changes, tag it v<upstream version>-sbb.<n>:
-# <n> restarts at 1 for each upstream version. Doc-only and CI-only changes are not tagged.
+# Whenever session-but-better gains code changes, tag it with upstream's version tag plus
+# `-better`: v1.18.5-better, then v1.18.5-better.2, .3 ... for further releases on the same
+# upstream version. Doc-only and CI-only changes are not tagged.
 # The tag is pushed with SYNC_TOKEN so that it triggers sbb-release.yml (tags pushed with the
 # Actions token do not trigger other workflows).
 name: Tag release
@@ -37,11 +38,11 @@ jobs:
           git config user.email "session-but-better-release@users.noreply.github.com"
           git fetch --quiet --no-tags https://github.com/session-foundation/session-desktop.git +refs/heads/dev:refs/remotes/upstream/dev
 
-          if git tag --points-at HEAD | grep -q -- '-sbb\.'; then
+          if git tag --points-at HEAD | grep -qE -- '-better(\.[0-9]+)?$'; then
             echo "HEAD is already tagged: $(git tag --points-at HEAD | tr '\n' ' ')"; exit 0
           fi
 
-          last=$(git describe --tags --match 'v*-sbb.*' --abbrev=0 HEAD 2>/dev/null || true)
+          last=$(git describe --tags --match 'v*-better*' --abbrev=0 HEAD 2>/dev/null || true)
           if [ -n "$last" ]; then
             code=$(git diff --name-only "$last..HEAD" | grep -vE '^(docs/|\.github/)|\.md$' || true)
             if [ -z "$code" ]; then
@@ -50,8 +51,12 @@ jobs:
           fi
 
           version=$(node -p "require('./package.json').version")
-          n=$(git tag -l "v${version}-sbb.*" | sed "s/^v${version}-sbb\.//" | grep -E '^[0-9]+$' | sort -n | tail -1)
-          tag="v${version}-sbb.$(( ${n:-0} + 1 ))"
+          if ! git rev-parse -q --verify "refs/tags/v${version}-better" >/dev/null; then
+            tag="v${version}-better"
+          else
+            n=$(git tag -l "v${version}-better.*" | sed "s/^v${version}-better\.//" | grep -E '^[0-9]+$' | sort -n | tail -1)
+            tag="v${version}-better.$(( ${n:-1} + 1 ))"
+          fi
 
           base=$(git merge-base HEAD upstream/dev)
           {

@@ -20,9 +20,10 @@ merged after review.
 
 ## Download
 
-Releases are on this repository's [Releases page](../../releases), tagged
-`v<upstream version>-sbb.<n>` (for example `v1.18.5-sbb.1` is the first Session, but Better
-release built on upstream 1.18.5). Builds are provided for:
+Releases are published at **[arf-io/session-desktop](https://github.com/arf-io/session-desktop/releases)**.
+Each carries upstream's version tag with `-better` on the end: `v1.18.5-better` is Session, but
+Better built on upstream Session 1.18.5. A further release on the same upstream version is
+`v1.18.5-better.2`, and so on. Builds are provided for:
 
 | Platform                        | Files                       |
 | ------------------------------- | --------------------------- |
@@ -37,8 +38,11 @@ not and cannot be. Each release has a `SHA256SUMS.txt`: compare it with
 **macOS.** Builds are not yet signed with an Apple Developer ID, so the first launch needs
 right-click → **Open**, and macOS won't install updates to them automatically.
 
-**Updates.** Installed builds update from this repository's releases, never from upstream, so an
-update never replaces Session, but Better with plain Session.
+**Updates.** The in-app updater installs releases from
+[arf-io/session-desktop](https://github.com/arf-io/session-desktop/releases), never from upstream,
+so an update never replaces Session, but Better with plain Session. As in upstream, the app first
+asks Session's file server whether a newer Session version exists. It offers an update once the
+matching `-better` release is published.
 
 ## Using the extra features
 
