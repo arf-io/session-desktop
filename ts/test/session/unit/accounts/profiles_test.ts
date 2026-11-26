@@ -32,7 +32,10 @@ describe('multi-account registry (profiles)', () => {
   const savedEnv = { ...process.env };
   const savedArgv = [...process.argv];
 
-  function launchAs(env: { NODE_ENV?: string; NODE_APP_INSTANCE?: string }, argv: Array<string> = []) {
+  function launchAs(
+    env: { NODE_ENV?: string; NODE_APP_INSTANCE?: string },
+    argv: Array<string> = []
+  ) {
     process.env.NODE_ENV = env.NODE_ENV;
     if (env.NODE_APP_INSTANCE === undefined) {
       delete process.env.NODE_APP_INSTANCE;
@@ -121,14 +124,19 @@ describe('multi-account registry (profiles)', () => {
     expect(getSelectedAccount().id).to.equal(me.id);
   });
 
-  it('reads the registry from disk, so another process\'s new account is never erased', () => {
+  it("reads the registry from disk, so another process's new account is never erased", () => {
     launchAs({ NODE_ENV: 'production' });
     const me = getSelectedAccount();
 
     // another process adds an account by rewriting the shared file
     const file = path.join(appData, 'Session-accounts.json');
     const onDisk = JSON.parse(fs.readFileSync(file, 'utf8'));
-    onDisk.accounts.push({ ...onDisk.accounts[0], id: 'fromelsewhere', isDefault: false, label: 'X' });
+    onDisk.accounts.push({
+      ...onDisk.accounts[0],
+      id: 'fromelsewhere',
+      isDefault: false,
+      label: 'X',
+    });
     fs.writeFileSync(file, JSON.stringify(onDisk));
 
     expect(listAccounts().map(a => a.id)).to.include('fromelsewhere');
