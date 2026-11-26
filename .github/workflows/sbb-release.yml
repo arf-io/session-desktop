@@ -1,0 +1,170 @@
+# Session, but Better — build Windows, macOS and Linux for a v*-sbb.* tag and publish the Release.
+#
+# Same build steps as upstream CI (actions/setup, pnpm build, unit tests, electron-builder), with
+# one difference: the update feed baked into the app points at THIS repository's releases, so an
+# installed Session, but Better never updates itself to plain upstream Session. package.json is
+# not edited; the feed is set on the electron-builder command line.
+name: Release
+
+on:
+  push:
+    tags: ['v*-sbb.*']
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Existing tag to (re)build, e.g. v1.18.5-sbb.1'
+        required: true
+
+concurrency:
+  group: release-${{ github.event.inputs.tag || github.ref_name }}
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
+env:
+  TAG: ${{ github.event.inputs.tag || github.ref_name }}
+  GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+  FEED: >-
+    --config.publish.provider=github
+    --config.publish.owner=${{ github.repository_owner }}
+    --config.publish.repo=${{ github.event.repository.name }}
+
+jobs:
+  create_release:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5
+        with:
+          ref: ${{ env.TAG }}
+          fetch-depth: 0
+          fetch-tags: true
+      - name: Create draft release
+        run: |
+          set -euo pipefail
+          if gh release view "$TAG" >/dev/null 2>&1; then echo "release $TAG exists"; exit 0; fi
+          {
+            git tag -l --format='%(contents)' "$TAG"
+            echo
+            echo "What differs from upstream: [docs/MODIFICATIONS.md](../../blob/$TAG/docs/MODIFICATIONS.md)."
+            echo "Verify downloads against SHA256SUMS.txt. macOS builds are unsigned (right-click → Open)."
+          } > "$RUNNER_TEMP/notes.md"
+          gh release create "$TAG" --draft --verify-tag --title "Session, but Better $TAG" --notes-file "$RUNNER_TEMP/notes.md"
+
+  linux:
+    needs: create_release
+    runs-on: ubuntu-22.04
+    timeout-minutes: 40
+    strategy:
+      fail-fast: false
+      matrix:
+        target: [deb, rpm, AppImage]
+    steps:
+      - uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5
+        with:
+          ref: ${{ env.TAG }}
+          submodules: recursive
+      - uses: ./actions/setup
+        with:
+          cache_suffix: linux_x64
+      - uses: ./actions/enforce_static_builds
+      - run: pnpm run build
+      - run: pnpm run test
+      - name: Package ${{ matrix.target }}
+        run: |
+          sed -i 's/"target": "deb"/"target": "${{ matrix.target }}"/g' package.json
+          # shellcheck disable=SC2086 # FEED is a list of flags
+          pnpm build-release-base --publish=never $FEED
+      - name: Upload to release
+        run: |
+          shopt -s nullglob
+          files=(release/*.deb release/*.rpm release/*.AppImage)
+          # only the AppImage auto-updates on Linux
+          [ "${{ matrix.target }}" = AppImage ] && files+=(release/latest-linux.yml)
+          gh release upload "$TAG" "${files[@]}" --clobber
+
+  windows:
+    needs: create_release
+    runs-on: windows-2022
+    timeout-minutes: 60
+    steps:
+      - run: git config --global core.autocrlf false
+      - run: git config --global core.eol lf
+      - uses: microsoft/setup-msbuild@v2
+      - uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5
+        with:
+          ref: ${{ env.TAG }}
+          submodules: recursive
+      - uses: ./actions/setup
+        with:
+          cache_suffix: windows_x64
+      - run: pnpm run build
+      - run: pnpm run test-hoisted
+      - name: Package
+        shell: bash
+        run: |
+          # shellcheck disable=SC2086 # FEED is a list of flags
+          pnpm build-release-base --publish=never $FEED
+      - name: Upload to release
+        shell: bash
+        run: |
+          shopt -s nullglob
+          gh release upload "$TAG" release/*.exe release/*.exe.blockmap release/latest.yml --clobber
+
+  mac:
+    needs: create_release
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - architecture: arm64
+            runner: macos-15
+          - architecture: x64
+            runner: macos-15-intel
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 60
+    env:
+      MAC_CERTIFICATE: ${{ secrets.MAC_CERTIFICATE }}
+      MAC_CERTIFICATE_PASSWORD: ${{ secrets.MAC_CERTIFICATE_PASSWORD }}
+      SIGNING_APPLE_ID: ${{ secrets.SIGNING_APPLE_ID }}
+      SIGNING_APP_PASSWORD: ${{ secrets.SIGNING_APP_PASSWORD }}
+      SIGNING_TEAM_ID: ${{ secrets.SIGNING_TEAM_ID }}
+      MACOSX_DEPLOYMENT_TARGET: '13.0'
+    steps:
+      - run: git config --global core.autocrlf false
+      - uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5
+        with:
+          ref: ${{ env.TAG }}
+          submodules: recursive
+      - uses: ./actions/setup
+        with:
+          cache_suffix: mac-${{ matrix.architecture }}
+      - uses: ./actions/enforce_static_builds
+      - run: pnpm run build
+      - run: pnpm run test
+      - name: Package ${{ matrix.architecture }}
+        run: |
+          source ./build/setup-mac-certificate.sh
+          # shellcheck disable=SC2086 # FEED is a list of flags
+          pnpm build-release-base --publish=never --config.mac.bundleVersion=${{ github.run_number }} $FEED
+      - name: Upload to release
+        # latest-mac.yml is not uploaded: arm64 and x64 would overwrite each other, and macOS only
+        # auto-updates signed apps anyway (see docs/MODIFICATIONS.md, Releases)
+        run: |
+          shopt -s nullglob
+          gh release upload "$TAG" release/*.dmg release/*.zip release/*.blockmap --clobber
+
+  publish:
+    needs: [linux, windows, mac]
+    runs-on: ubuntu-22.04
+    timeout-minutes: 10
+    steps:
+      - name: Checksums and publish
+        run: |
+          set -euo pipefail
+          mkdir assets && cd assets
+          gh release download "$TAG" -R "${{ github.repository }}"
+          sha256sum -- * | grep -v SHA256SUMS > SHA256SUMS.txt
+          gh release upload "$TAG" SHA256SUMS.txt -R "${{ github.repository }}" --clobber
+          gh release edit "$TAG" -R "${{ github.repository }}" --draft=false

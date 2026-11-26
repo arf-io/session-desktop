@@ -18,13 +18,13 @@ name: Upstream sync
 
 on:
   schedule:
-    - cron: "*/15 * * * *"
+    - cron: '*/15 * * * *'
   workflow_dispatch:
     inputs:
       only:
-        description: "Sync only this branch (blank = all)"
+        description: 'Sync only this branch (blank = all)'
         required: false
-        default: ""
+        default: ''
 
 concurrency:
   group: upstream-sync
@@ -100,7 +100,7 @@ jobs:
         if: steps.prep.outputs.status == 'merged' || steps.prep.outputs.status == 'conflict'
         uses: ./actions/setup
         with:
-          cache_suffix: "linux_x64"
+          cache_suffix: 'linux_x64'
 
       - name: Build, test, lint (as upstream CI)
         id: verify
@@ -108,7 +108,7 @@ jobs:
         continue-on-error: true
         run: |
           set -o pipefail
-          { pnpm run build && pnpm run test && pnpm run lint && git diff --exit-code; } 2>&1 | tee "$RUNNER_TEMP/verify.log"
+          { pnpm run build && pnpm run test && pnpm run lint && git diff --exit-code && bash "$RUNNER_TEMP/upstream-sync.sh" check-docs; } 2>&1 | tee "$RUNNER_TEMP/verify.log"
 
       - name: Agent — resolve conflicts / fix failures
         id: agent
@@ -140,14 +140,20 @@ jobs:
                feature on top of it with the smallest change that keeps the feature working.
             2. Never change wire formats, protobufs, message/call signalling, database schema or
                migrations, or anything an unmodified upstream Session client must understand.
+               The one sanctioned addition is the optional `screenShare` field in the call
+               data-channel status JSON (CallManager.ts); keep it.
             3. Do not touch files outside the conflict/failure unless strictly required. Do not
                delete or weaken tests; fix the code. Submodule pointers: take upstream's.
+            3b. docs/MODIFICATIONS.md (on session-but-better) must name every path that differs
+               from upstream and describe each feature accurately; update it with any change you
+               make. README.md on session-but-better is ours: on conflict keep ours.
             4. Finish every merge: resolve, `git add`, `git commit --no-edit`; then merge each remaining
                source listed above the same way (`git merge --no-ff --no-edit <source>`), skipping any
                already contained in HEAD.
             5. Commit messages must pass the repo's commitlint (conventional, lower-case subject),
                e.g. "fix(sync): keep account switcher working after upstream modal refactor".
                Verify with: pnpm run build && pnpm run test && pnpm run lint && git diff --exit-code
+               && bash $RUNNER_TEMP/upstream-sync.sh check-docs
                Commit any fixes. Do NOT push and do NOT rewrite history (no rebase, reset, amend).
             6. If you cannot make it green without breaking rule 1 or 2, stop, leave everything
                committed, and write the reason to $RUNNER_TEMP/agent-notes.md.
@@ -160,7 +166,7 @@ jobs:
         run: |
           set -o pipefail
           bash "$RUNNER_TEMP/upstream-sync.sh" check
-          { pnpm run build && pnpm run test && pnpm run lint && git diff --exit-code; } 2>&1 | tee "$RUNNER_TEMP/verify.log"
+          { pnpm run build && pnpm run test && pnpm run lint && git diff --exit-code && bash "$RUNNER_TEMP/upstream-sync.sh" check-docs; } 2>&1 | tee "$RUNNER_TEMP/verify.log"
 
       - name: Push sync branch and open / update PR
         if: steps.prep.outputs.status == 'merged' || steps.prep.outputs.status == 'conflict'

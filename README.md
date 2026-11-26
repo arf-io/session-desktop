@@ -1,133 +1,93 @@
-# Session Desktop
+# Session, but Better
 
-[Download at getsession.org](https://getsession.org/download)
+Session, but Better is a desktop client for the [Session](https://getsession.org) private
+messenger. It is built from [session-foundation/session-desktop](https://github.com/session-foundation/session-desktop)
+and adds:
 
-## Summary
+- **Fullscreen calls and screen sharing.** Put a call on the whole display, and share a window or
+  a screen during it, at the same time.
+- **Multiple live accounts.** Several Session accounts at once, each in its own window. All of them
+  receive messages and calls, whichever one is on screen.
 
-Session integrates directly with [Oxen Service Nodes](https://docs.oxen.io/about-the-oxen-blockchain/oxen-service-nodes), which are a set of distributed, decentralized and Sybil resistant nodes. Service Nodes act as servers which store messages offline, and a set of nodes which allow for onion routing functionality obfuscating users IP Addresses. For a full understanding of how Session works, read the [Session Whitepaper](https://getsession.org/whitepaper).
+It stays **fully compatible with upstream Session**: same network, same protocol, same database.
+You can message and call anyone on upstream Session, and moving between upstream Session and
+Session, but Better keeps your account. Upstream changes are merged automatically, usually within
+15 minutes of landing upstream.
 
-<br/>
-<br/>
-<img src="https://i.imgur.com/ydVhH00.png" alt="Screenshot of Session Desktop" />
+> Session, but Better is an independent fork, not a product of the Session Technology Foundation.
+> Please report problems with these builds here, not to upstream.
 
-## Want to Contribute? Found a Bug or Have a feature request?
+## Download
 
-Please search for any [existing issues](https://github.com/session-foundation/session-desktop/issues) that describe your bug or feature request to avoid duplicate submissions.
+Releases are on this repository's [Releases page](../../releases), tagged
+`v<upstream version>-sbb.<n>` (for example `v1.18.5-sbb.1` is the first Session, but Better
+release built on upstream 1.18.5). Builds are provided for:
 
-Submissions can be made by making a pull request to our development branch.If you don't know where to start contributing please read [Contributing.md](CONTRIBUTING.md) and refer to issues tagged with the [good-first-issue](https://github.com/session-foundation/session-desktop/issues?q=is%3Aopen+is%3Aissue+label%3A%22good+first+issue%22) tag.
+| Platform                        | Files                       |
+| ------------------------------- | --------------------------- |
+| Windows x64                     | `.exe` installer            |
+| macOS (Apple silicon and Intel) | `.dmg` / `.zip`             |
+| Linux x64                       | `.deb`, `.rpm`, `.AppImage` |
 
-## Supported platforms
+**Verifying downloads.** Upstream's releases are GPG-signed by Session's release signer; ours are
+not and cannot be. Each release has a `SHA256SUMS.txt`: compare it with
+`shasum -a 256 <file>` (macOS/Linux) or `Get-FileHash <file>` (Windows).
 
-Check Session's system requirements and what platforms are supported [here](https://github.com/session-foundation/session-desktop/releases/latest#user-content-supported-platforms).
+**macOS.** Builds are not yet signed with an Apple Developer ID, so the first launch needs
+right-click → **Open**, and macOS won't install updates to them automatically.
 
-## Build instructions
+**Updates.** Installed builds update from this repository's releases, never from upstream, so an
+update never replaces Session, but Better with plain Session.
 
-Build instructions can be found in [Contributing.md](CONTRIBUTING.md).
+## Using the extra features
 
-## Translations
+- **Fullscreen**: during a call, use the fullscreen button in the call controls. Press **Esc** or
+  use the "Exit Full Screen" pill to leave.
+- **Screen sharing**: during a call, use the share button and pick a window or screen. On macOS,
+  the first share asks for Screen Recording permission. Sharing replaces your camera and restores
+  it when you stop.
+- **Accounts**: the people icon in the left bar opens the account switcher. "Add account" opens a
+  new window with Session's normal sign-up and restore flow. "Background" keeps an account running
+  when you start Session. "Remove from this list" never deletes an account's messages; its data
+  stays on disk.
 
-Want to help us translate Session into your language? You can do so at https://getsession.org/translate!
+## What is different from upstream
 
-## Verifying signatures
+Every change is documented, file by file, with its compatibility notes, what was verified and
+known limits, in **[docs/MODIFICATIONS.md](docs/MODIFICATIONS.md)**.
 
-**Step 1:**
+## Branches
 
-Add Jason's GPG key. Jason Rhinelander, a member of the [Session Technology Foundation](https://session.foundation/) and is the current signer for all Session Desktop releases. His GPG key can be found on his GitHub and other sources.
+| Branch               | Contents                                                                                                                                 |
+| -------------------- | ---------------------------------------------------------------------------------------------------------------------------------------- |
+| `session-but-better` | **the product**: upstream plus every feature below (default branch)                                                                      |
+| `full-screen-chat`   | upstream plus fullscreen calls and screen sharing ([upstream PR #2065](https://github.com/session-foundation/session-desktop/pull/2065)) |
+| `multi-account`      | upstream plus multiple live accounts                                                                                                     |
+| `dev`                | an exact mirror of upstream `dev`, never modified                                                                                        |
+| `upstream-sync/*`    | automated upstream merges awaiting review                                                                                                |
 
-```sh
-wget https://github.com/jagerman.gpg
-gpg --import jagerman.gpg
-```
+Branches only ever _merge_ upstream; nothing is rebased or force-pushed.
+See [docs/MODIFICATIONS.md § Fork infrastructure](docs/MODIFICATIONS.md#3-fork-infrastructure-session-but-better-only)
+for how the sync, tagging and release automation work.
 
-**Step 2:**
+## Building from source
 
-Get the signed hashes for this release. `SESSION_VERSION` needs to be updated for the release you want to verify.
-
-```sh
-export SESSION_VERSION=1.15.0
-wget https://github.com/session-foundation/session-desktop/releases/download/v$SESSION_VERSION/signature.asc
-```
-
-**Step 3:**
-
-Verify the signature of the hashes of the files.
-
-```sh
-gpg --verify signature.asc 2>&1 |grep "Good signature from"
-```
-
-The command above should print "`Good signature from "Jason Rhinelander...`". If it does, the hashes are valid but we still have to make the sure the signed hashes match the downloaded files.
-
-**Step 4:**
-
-Make sure the two commands below return the same hash for the file you are checking. If they do, file is valid.
-
-<details>
-<summary>Linux</summary>
-
-```sh
-sha256sum session-desktop-linux-amd64-$SESSION_VERSION.deb
-grep .deb signature.asc
-```
-
-</details>
-
-<details>
-<summary>macOS</summary>
-
-**Apple Silicon**
+The same as upstream (see [CONTRIBUTING.md](CONTRIBUTING.md)):
 
 ```sh
-sha256sum releases/session-desktop-mac-arm64-$SESSION_VERSION.dmg
-grep .dmg signature.asc
+git clone --recursive https://github.com/arf-io/session-desktop.git
+cd session-desktop            # default branch: session-but-better
+# Node version from .nvmrc, pnpm via corepack
+corepack enable
+pnpm install
+pnpm build
+pnpm test
+pnpm start-prod               # runs against a separate development data directory
 ```
 
-**Intel**
-
-```sh
-sha256sum releases/session-desktop-mac-x64-$SESSION_VERSION.dmg
-grep .dmg signature.asc
-```
-
-</details>
-
-<details>
-<summary>Windows</summary>
-
-**PowerShell**
-
-```PowerShell
-Get-FileHash -Algorithm SHA256 session-desktop-win-x64-$SESSION_VERSION.exe  # checksum is uppercase but should otherwise match
-Select-String -Pattern ".exe" signature.asc
-```
-
-**Bash**
-
-```sh
-sha256sum session-desktop-win-x64-$SESSION_VERSION.exe
-grep .exe signature.asc
-```
-
-</details>
-
-## Debian repository
-
-Please visit https://deb.oxen.io/
+`pnpm build-release` produces installers for the platform you build on.
 
 ## License
 
-Copyright 2011 Whisper Systems
-
-Copyright 2013-2017 Open Whisper Systems
-
-Copyright 2019-2024 The Oxen Project
-
-Copyright 2024-2025 Session Technology Foundation
-
-Licensed under the GPLv3: https://www.gnu.org/licenses/gpl-3.0.html
-
-## Attributions
-
-The IP-to-country mapping data used in this project is provided by [MaxMind GeoLite2](https://dev.maxmind.com/geoip/geolite2-free-geolocation-data).
-
-This project uses the [Lucide Icon Font](https://lucide.dev/), which is licensed under the [ISC License](./third_party_licenses/LucideLicense.txt).
+GPL-3.0, as upstream; see [LICENSE](LICENSE). Session, but Better builds on the work of the Session
+Technology Foundation and the Session contributors.

@@ -7,6 +7,8 @@
 #   upstream-sync.sh mirror              fast-forward our `dev` to upstream/dev (pure mirror)
 #   upstream-sync.sh prepare <target>    create/advance upstream-sync/<target> and merge its sources
 #   upstream-sync.sh check               fail if conflict markers or unmerged paths remain
+#   upstream-sync.sh check-docs          fail if a path that differs from upstream is not named in
+#                                        docs/MODIFICATIONS.md (skipped where that file is absent)
 #
 # Sources merged into each target (in order):
 #   full-screen-chat    upstream/dev, origin/$FSC_TRACK_BRANCH (the upstream PR #2065 branch)
@@ -120,9 +122,28 @@ cmd_check() {
   exit "$bad"
 }
 
+cmd_check_docs() {
+  local doc=docs/MODIFICATIONS.md missing=0 f
+  if [ ! -f "$doc" ]; then
+    log "no $doc on this branch; skipping"
+    return 0
+  fi
+  git rev-parse -q --verify "upstream/${UPSTREAM_BRANCH}" >/dev/null || fetch_all
+  while IFS= read -r f; do
+    [ -n "$f" ] || continue
+    if ! grep -qF -- "$f" "$doc"; then
+      log "not documented in $doc: $f"
+      missing=1
+    fi
+  done < <(git diff --name-only "upstream/${UPSTREAM_BRANCH}...HEAD")
+  [ "$missing" = 0 ] && log "every modified path is documented"
+  return "$missing"
+}
+
 case "${1:-}" in
   mirror) cmd_mirror ;;
   prepare) cmd_prepare "${2:?target branch}" ;;
   check) cmd_check ;;
-  *) echo "usage: $0 mirror | prepare <target> | check" >&2; exit 2 ;;
+  check-docs) cmd_check_docs ;;
+  *) echo "usage: $0 mirror | prepare <target> | check | check-docs" >&2; exit 2 ;;
 esac

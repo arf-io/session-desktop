@@ -1,0 +1,73 @@
+# Session, but Better — tag every new version of ours.
+#
+# Whenever session-but-better gains code changes, tag it v<upstream version>-sbb.<n>:
+# <n> restarts at 1 for each upstream version. Doc-only and CI-only changes are not tagged.
+# The tag is pushed with SYNC_TOKEN so that it triggers sbb-release.yml (tags pushed with the
+# Actions token do not trigger other workflows).
+name: Tag release
+
+on:
+  push:
+    branches: [session-but-better]
+  workflow_dispatch:
+
+concurrency:
+  group: sbb-tag
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  tag:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5
+        with:
+          ref: session-but-better
+          fetch-depth: 0
+          fetch-tags: true
+          token: ${{ secrets.SYNC_TOKEN }}
+
+      - name: Decide and create the tag
+        run: |
+          set -euo pipefail
+          git config user.name "session-but-better-release[bot]"
+          git config user.email "session-but-better-release@users.noreply.github.com"
+          git fetch --quiet --no-tags https://github.com/session-foundation/session-desktop.git +refs/heads/dev:refs/remotes/upstream/dev
+
+          if git tag --points-at HEAD | grep -q -- '-sbb\.'; then
+            echo "HEAD is already tagged: $(git tag --points-at HEAD | tr '\n' ' ')"; exit 0
+          fi
+
+          last=$(git describe --tags --match 'v*-sbb.*' --abbrev=0 HEAD 2>/dev/null || true)
+          if [ -n "$last" ]; then
+            code=$(git diff --name-only "$last..HEAD" | grep -vE '^(docs/|\.github/)|\.md$' || true)
+            if [ -z "$code" ]; then
+              echo "only docs/CI changed since $last; not tagging"; exit 0
+            fi
+          fi
+
+          version=$(node -p "require('./package.json').version")
+          n=$(git tag -l "v${version}-sbb.*" | sed "s/^v${version}-sbb\.//" | grep -E '^[0-9]+$' | sort -n | tail -1)
+          tag="v${version}-sbb.$(( ${n:-0} + 1 ))"
+
+          base=$(git merge-base HEAD upstream/dev)
+          {
+            echo "Session, but Better ${tag}"
+            echo
+            echo "Upstream base: session-foundation/session-desktop@$(git rev-parse --short "$base") (v${version})"
+            for b in full-screen-chat multi-account; do
+              if git rev-parse -q --verify "origin/$b" >/dev/null; then
+                echo "Includes $b: $(git rev-parse --short "origin/$b")$(git merge-base --is-ancestor "origin/$b" HEAD && echo '' || echo ' (NOT fully merged)')"
+              fi
+            done
+            echo
+            echo "Changes since ${last:-the fork point}:"
+            git log --no-merges --format='- %s' "${last:-$base}..HEAD" | head -50
+          } > "$RUNNER_TEMP/tag-msg.txt"
+
+          git tag -a "$tag" -F "$RUNNER_TEMP/tag-msg.txt"
+          git push origin "refs/tags/$tag"
+          echo "created $tag"
