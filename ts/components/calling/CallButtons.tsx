@@ -282,7 +282,8 @@ export const ShowInFullScreenButton = ({ isFullScreen }: { isFullScreen: boolean
 
 /**
  * Screen sharing reuses the call's single video sender, so starting a share turns the camera off
- * and stopping it puts the camera back. See CallManager.startScreenShare.
+ * and stopping it puts the camera back. The camera button keeps showing that camera during the
+ * share, and changes it without ending the share. See CallManager.startScreenShare.
  */
 export const ScreenShareButton = ({
   isFullScreen,

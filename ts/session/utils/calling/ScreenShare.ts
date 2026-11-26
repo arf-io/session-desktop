@@ -36,3 +36,37 @@ export function remoteScreenShareAfter(parsed: unknown, previous: boolean): bool
   }
   return message.screenShare === true;
 }
+
+/**
+ * The camera the camera button reflects. A share holds the call's only video sender, so while it
+ * runs no camera is live; the button then shows the camera that comes back when the share ends.
+ */
+export function cameraShownOnButton({
+  isScreenSharing,
+  liveCameraId,
+  cameraAfterShare,
+}: {
+  isScreenSharing: boolean;
+  liveCameraId: string;
+  cameraAfterShare: string;
+}): string {
+  return isScreenSharing ? cameraAfterShare : liveCameraId;
+}
+
+/**
+ * A camera chosen during a share (the camera toggle or the camera menu) does not end the share:
+ * it only changes the camera that comes back when the share ends. An unknown camera is ignored.
+ */
+export function cameraAfterShareOnRequest({
+  requestedId,
+  cameraAfterShare,
+  cameraIds,
+  offId,
+}: {
+  requestedId: string;
+  cameraAfterShare: string;
+  cameraIds: Array<string>;
+  offId: string;
+}): string {
+  return requestedId === offId || cameraIds.includes(requestedId) ? requestedId : cameraAfterShare;
+}

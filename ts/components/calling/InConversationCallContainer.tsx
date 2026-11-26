@@ -210,9 +210,9 @@ export const InConversationCallContainer = () => {
             ref={videoRefLocal}
             autoPlay={true}
             muted={true}
-            $isVideoMuted={localStreamVideoIsMuted}
+            $isVideoMuted={localStreamVideoIsMuted && !isScreenSharing}
           />
-          {localStreamVideoIsMuted && (
+          {localStreamVideoIsMuted && !isScreenSharing && (
             <CenteredAvatarInConversation>
               <Avatar size={AvatarSize.XL} pubkey={ourPubkey} />
             </CenteredAvatarInConversation>

@@ -1,6 +1,8 @@
 import { assert } from 'chai';
 
 import {
+  cameraAfterShareOnRequest,
+  cameraShownOnButton,
   remoteScreenShareAfter,
   videoStatusPayload,
 } from '../../../../session/utils/calling/ScreenShare';
@@ -63,5 +65,62 @@ describe('screen share data-channel status', () => {
       assert.isTrue(remoteScreenShareAfter(null, true));
       assert.isTrue(remoteScreenShareAfter(42, true));
     });
+  });
+});
+
+describe('camera button during a screen share', () => {
+  const off = 'off';
+
+  it('shows the camera that comes back after the share, not the share itself', () => {
+    // sharing with the camera off: the button says "off", where it used to say "on"
+    assert.strictEqual(
+      cameraShownOnButton({ isScreenSharing: true, liveCameraId: off, cameraAfterShare: off }),
+      off
+    );
+    assert.strictEqual(
+      cameraShownOnButton({ isScreenSharing: true, liveCameraId: off, cameraAfterShare: 'cam-1' }),
+      'cam-1'
+    );
+  });
+
+  it('shows the live camera when not sharing', () => {
+    assert.strictEqual(
+      cameraShownOnButton({ isScreenSharing: false, liveCameraId: 'cam-2', cameraAfterShare: off }),
+      'cam-2'
+    );
+  });
+
+  it('turns a camera toggle during the share into the camera restored after it', () => {
+    const cameraIds = ['cam-1', 'cam-2'];
+    assert.strictEqual(
+      cameraAfterShareOnRequest({
+        requestedId: 'cam-1',
+        cameraAfterShare: off,
+        cameraIds,
+        offId: off,
+      }),
+      'cam-1'
+    );
+    assert.strictEqual(
+      cameraAfterShareOnRequest({
+        requestedId: off,
+        cameraAfterShare: 'cam-1',
+        cameraIds,
+        offId: off,
+      }),
+      off
+    );
+  });
+
+  it('ignores a camera that is not connected', () => {
+    assert.strictEqual(
+      cameraAfterShareOnRequest({
+        requestedId: 'gone',
+        cameraAfterShare: 'cam-1',
+        cameraIds: ['cam-1'],
+        offId: off,
+      }),
+      'cam-1'
+    );
   });
 });

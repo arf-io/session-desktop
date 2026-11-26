@@ -38,7 +38,12 @@ import { sleepFor } from '../Promise';
 import { tr } from '../../../localization/localeTools';
 import { uuidV4 } from '../../../util/uuid';
 import { setScreenShareSource } from '../../../util/screenShare';
-import { remoteScreenShareAfter, videoStatusPayload } from './ScreenShare';
+import {
+  cameraAfterShareOnRequest,
+  cameraShownOnButton,
+  remoteScreenShareAfter,
+  videoStatusPayload,
+} from './ScreenShare';
 
 export type InputItem = { deviceId: string; label: string };
 
@@ -93,8 +98,13 @@ function callVideoListeners() {
         audioInputsList,
         audioOutputsList,
         isRemoteVideoStreamMuted: remoteVideoStreamIsMuted,
-        // while sharing our screen we *are* sending video, even though no camera is selected
-        isLocalVideoStreamMuted: !isScreenSharing && selectedCameraId === DEVICE_DISABLED_DEVICE_ID,
+        // the camera button's state; the local preview also shows while we share our screen
+        isLocalVideoStreamMuted:
+          cameraShownOnButton({
+            isScreenSharing,
+            liveCameraId: selectedCameraId,
+            cameraAfterShare: cameraIdBeforeScreenShare,
+          }) === DEVICE_DISABLED_DEVICE_ID,
         isAudioMuted: selectedAudioInputId === DEVICE_DISABLED_DEVICE_ID,
         currentSelectedAudioOutput: selectedAudioOutputId,
         isScreenSharing,
@@ -214,7 +224,8 @@ let selectedAudioOutputId: string = DEVICE_DISABLED_DEVICE_ID;
  * extra m-line would break calls with unmodified Session clients.
  *
  * The consequence, which is by design: while sharing, the camera is off. The camera which was
- * selected before the share started is restored when the share stops.
+ * selected before the share started is restored when the share stops; choosing a camera during
+ * the share changes which one that is, without ending the share.
  */
 let isScreenSharing = false;
 let videoChange = 0;
@@ -387,10 +398,24 @@ export async function stopScreenShare() {
     return;
   }
   const restore = cameraIdBeforeScreenShare;
-  await selectCameraByDeviceId(restore);
+  await switchCamera(restore);
 }
 
 export async function selectCameraByDeviceId(cameraDeviceId: string) {
+  if (isScreenSharing) {
+    cameraIdBeforeScreenShare = cameraAfterShareOnRequest({
+      requestedId: cameraDeviceId,
+      cameraAfterShare: cameraIdBeforeScreenShare,
+      cameraIds: camerasList.map(m => m.deviceId),
+      offId: DEVICE_DISABLED_DEVICE_ID,
+    });
+    callVideoListeners();
+    return;
+  }
+  await switchCamera(cameraDeviceId);
+}
+
+async function switchCamera(cameraDeviceId: string) {
   const change = beginVideoChange();
   if (!change) {
     return;

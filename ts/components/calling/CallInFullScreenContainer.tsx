@@ -166,7 +166,7 @@ const CallInFullScreenContainerInner = () => {
         ref={videoRefLocal}
         autoPlay={true}
         muted={true}
-        $isVideoMuted={localStreamVideoIsMuted}
+        $isVideoMuted={localStreamVideoIsMuted && !isScreenSharing}
       />
       <CallWindowControls
         currentConnectedAudioInputs={currentConnectedAudioInputs}
