@@ -120,8 +120,9 @@ tmp files left by writers that are no longer alive are deleted.
   whose id has the generated format, oldest first. Copying rather than moving the bad file means
   there is never a moment with no file, in which another process would see a first run. Labels and
   identities come from this process's last good read where it has one; otherwise the renderer
-  reports them again as each account runs. An account that had been *forgotten* comes back,
-  because forgetting keeps its data.
+  reports them again as each account runs. Re-adopted accounts the process did not know come back
+  with "Background" off, so a repair does not start a crowd of processes at the next launch. An
+  account that had been *forgotten* comes back, because forgetting keeps its data.
 - *Unreadable* (permissions, I/O): never written over. Read-only callers use the last good copy if
   there is one; mutations fail.
 
@@ -173,10 +174,16 @@ account from `activeId`, which other accounts change. `app.relaunch()` (restart,
 is therefore given this process's argv minus `--profile=` and `--session-background`, plus
 `--profile=<this account>`. `--session-spawned-sibling` is kept, so a sibling does not start
 fanning out. The updater's relaunch cannot be given arguments: Squirrel.Mac, the NSIS installer
-and the AppImage updater each start the app with their own command line. When an update starts
-installing (`before-quit-for-update`), `activeId` is pointed at this account, so the argument-less
-relaunch resolves to it. Another account changing `activeId` between that moment and the relaunch
-would still win; that window is not closed.
+and the AppImage updater each start the app with their own command line. Two pins cover them:
+
+- at start-up each account process sets `SESSION_PROFILE=<its id>` in its own environment, which
+  is consulted before `activeId`. The AppImage updater spawns the new AppImage, and the NSIS
+  updater its installer, with a copy of that environment. The AppImage one does so *before*
+  `before-quit-for-update` fires, so the second pin alone would be too late for it;
+- on `before-quit-for-update`, `activeId` is pointed at this account, for Squirrel.Mac, whose
+  relaunch does not inherit our environment and happens after this process has exited. Another
+  account changing `activeId` in between would still win; that window is not closed. Whether the
+  NSIS installer passes its environment on to the app it starts has not been verified.
 
 **R5 required a fix to existing code.** `main_node.ts` only quit on a failed lock when
 `NODE_APP_INSTANCE === 0`, an escape hatch so developers could run several copies. With
@@ -334,17 +341,39 @@ Observed:
 
 - Before the fix, the new cross-process tests failed: `62 of 100 returned ids were never
   persisted`, and a fresh process given a torn registry returned `[ 'default' ]` only.
-- After: unit suite 1078 passing / 0 failing (1055 before), build exit 0, lint clean.
+- After: unit suite 1079 passing / 0 failing (1055 before), build exit 0, lint clean.
 - Stress outside the suite: 8 processes × 60 adds, 5 rounds: 480 returned, 0 errors, 0 lost, 481
   on disk, no tmp or lock files left, each round.
 - A writer `SIGKILL`ed while holding the lock, with a half-written tmp file: the next writer broke
   the lock, swept the tmp file and saved its account.
 - `Atomics.wait` runs in an Electron 40 main process (the lock's back-off).
 
+In the running app (macOS, Electron 40, dev build, `NODE_APP_INSTANCE=smoke`, with a throwaway
+home directory so nothing touched a real profile), driving the account IPC over the DevTools
+protocol:
+
+- start-up logged `userData: …/Session-development-smoke (account default)` and wrote
+  `session-account.pid` with the main process's pid;
+- a second identical launch logged `quitting; this account is already running in another
+  process`, exited 0 and left the record alone;
+- `add-account` returned `{"ok":true,"id":"db77ea96726d","label":"Account 2"}` and started
+  `Electron ./app --profile=db77ea96726d --session-spawned-sibling`: the parent's
+  `--remote-debugging-port=9333` was not passed on;
+- `forget-account` on that running account returned `"That account is still running. Quit it
+  first, then remove it."`; `switch-account` with an unknown id and with `../x` returned
+  `"No such account."`;
+- with `activeId` now pointing at the new account, `restart` from the first window (launched
+  without `--profile=`) came back as `Electron ./app --remote-debugging-port=9333
+  --profile=default`, and the other account kept running as the same process;
+- with `APPIMAGE` pointed at a missing file, `add-account` returned `ok: true` with
+  `launchError: "spawn … ENOENT"`, switching returned the same error, and the main process stayed
+  up with no uncaught exception;
+- SIGTERM removed each process's pid record; no lock or tmp file was left.
+
 Not verified in a running app for 1.1: the close-to-hide behaviour on Windows/Linux, the tray
-labels, the password window of a background account, `app.relaunch()` with the pinned profile,
-the updater relaunch, and AppImage launches. Their decisions are unit-tested as pure functions;
-the Electron wiring around them is a few lines in `main_node.ts` that has not been exercised.
+labels, the password window of a background account, whether a running background account stays
+hidden when a restarted first instance fans out again, the updater relaunch, and a real AppImage.
+Their decisions are unit-tested as pure functions.
 
 ## 6. Backing out
 
