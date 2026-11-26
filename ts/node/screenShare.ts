@@ -8,17 +8,33 @@ import {
 } from 'electron';
 
 import { UserConfig } from './config/user_config';
-import type { ScreenShareSourcesResult } from '../util/screenShare';
+import type { ScreenShareMode, ScreenShareSourcesResult } from '../util/screenShare';
+
+/**
+ * Whether Chromium captures through the xdg-desktop-portal (PipeWire) rather than listing sources
+ * itself. This mirrors WebRTC's own test (DesktopCapturer::IsRunningUnderWayland): a Wayland
+ * session type and a Wayland display. There, desktopCapturer.getSources() opens the portal's
+ * picker as a side effect and returns only what the user chose in it.
+ */
+export function capturesThroughPortal(platform: NodeJS.Platform, env: NodeJS.ProcessEnv) {
+  return (
+    platform === 'linux' &&
+    Boolean(env.XDG_SESSION_TYPE?.startsWith('wayland')) &&
+    Boolean(env.WAYLAND_DISPLAY)
+  );
+}
 
 type ScreenShareSystem = {
   getSources: (options: Electron.SourcesOptions) => Promise<Array<DesktopCapturerSource>>;
   screenAccess: () => ScreenShareSourcesResult['screenAccess'];
+  usesPortal: () => boolean;
 };
 
 const electronScreenShareSystem: ScreenShareSystem = {
   getSources: options => desktopCapturer.getSources(options),
   screenAccess: () =>
     process.platform === 'darwin' ? systemPreferences.getMediaAccessStatus('screen') : 'granted',
+  usesPortal: () => capturesThroughPortal(process.platform, process.env),
 };
 
 export function installScreenSharePicker(
@@ -58,12 +74,22 @@ export function installScreenSharePicker(
   }
 
   const { screenAccess } = system;
+  const portal = system.usesPortal();
+
+  contents.ipc.handle(
+    'get-screen-share-mode',
+    (): ScreenShareMode => (portal ? 'portal' : 'picker')
+  );
 
   contents.ipc.handle(
     'get-screen-share-sources',
     async (event): Promise<ScreenShareSourcesResult> => {
       if (!allowed(event.senderFrame)) {
         return { screenAccess: 'denied', sources: [] };
+      }
+      if (portal) {
+        // listing would open the portal's picker; in portal mode the request below does that
+        return { screenAccess: 'granted', sources: [] };
       }
       clear();
       const request = generation;
@@ -100,7 +126,7 @@ export function installScreenSharePicker(
   );
 
   contents.ipc.handle('set-screen-share-source', (event, id: string | null) => {
-    if (!allowed(event.senderFrame)) {
+    if (portal || !allowed(event.senderFrame)) {
       return false;
     }
     const source = choices.find(item => item.id === id);
@@ -120,6 +146,24 @@ export function installScreenSharePicker(
     }
   });
 
+  async function respondFromPortal(
+    frame: WebFrameMain | null,
+    respond: (streams: Electron.Streams | null) => void
+  ) {
+    let source: DesktopCapturerSource | undefined;
+    try {
+      // Opens the portal's own picker. Only the chosen source comes back, so no thumbnails.
+      [source] = await system.getSources({
+        types: ['screen', 'window'],
+        thumbnailSize: { width: 0, height: 0 },
+      });
+    } catch (e) {
+      // what a cancel in the portal's dialog looks like: the user chose not to share
+      console.info('screen share: the portal returned no source:', e?.message);
+    }
+    respond(source && allowed(frame) ? { video: source } : null);
+  }
+
   session.setDisplayMediaRequestHandler((request, callback) => {
     // Electron 40 accepts null to decline a request. Its declaration only lists Streams.
     const respond = callback as (streams: Electron.Streams | null) => void;
@@ -130,6 +174,11 @@ export function installScreenSharePicker(
       request.audioRequested
     ) {
       respond(null);
+      return;
+    }
+    if (portal) {
+      clear();
+      void respondFromPortal(request.frame, respond);
       return;
     }
     const picked = selection;

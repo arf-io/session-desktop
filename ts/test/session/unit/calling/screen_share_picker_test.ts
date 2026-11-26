@@ -3,7 +3,7 @@ import type { BrowserWindow, DesktopCapturerSource, Session, WebFrameMain } from
 import Sinon from 'sinon';
 
 import type { UserConfig } from '../../../../node/config/user_config';
-import { installScreenSharePicker } from '../../../../node/screenShare';
+import { capturesThroughPortal, installScreenSharePicker } from '../../../../node/screenShare';
 
 type DisplayHandler = NonNullable<Parameters<Session['setDisplayMediaRequestHandler']>[0]>;
 type IpcHandler = (event: { senderFrame: WebFrameMain | null }, ...args: Array<any>) => any;
@@ -22,7 +22,8 @@ function fakeSource(id: string): DesktopCapturerSource {
 
 function setup(
   getSources = Sinon.stub().resolves([fakeSource('screen:1'), fakeSource('window:2')]),
-  screenAccess: () => 'granted' | 'denied' | 'restricted' = () => 'granted'
+  screenAccess: () => 'granted' | 'denied' | 'restricted' = () => 'granted',
+  usesPortal = false
 ) {
   const mainFrame = { url: pageURL } as WebFrameMain;
   const handlers = new Map<string, IpcHandler>();
@@ -41,6 +42,7 @@ function setup(
   installScreenSharePicker(window, pageURL, { get: () => true } as unknown as UserConfig, {
     getSources,
     screenAccess,
+    usesPortal: () => usesPortal,
   });
 
   const displayHandler: DisplayHandler = register.firstCall.args[0];
@@ -57,6 +59,11 @@ function setup(
     displayHandler(request, respond);
     return respond.firstCall.args[0];
   };
+  // the portal path answers after an await, so wait for the response rather than reading it
+  const requestDisplayLater = (overrides: Partial<typeof request> = {}) =>
+    new Promise<Electron.Streams | null>(resolve => {
+      displayHandler({ ...request, ...overrides }, resolve as any);
+    });
   const navigate = (details: { isMainFrame: boolean; isSameDocument: boolean }) => {
     for (const call of on.getCalls()) {
       if (call.args[0] === 'did-start-navigation') {
@@ -69,7 +76,9 @@ function setup(
     request,
     displayHandler,
     requestDisplay,
+    requestDisplayLater,
     navigate,
+    mode: () => handlers.get('get-screen-share-mode')!(event),
     listSources: () => handlers.get('get-screen-share-sources')!(event),
     pick: (id: string | null) => handlers.get('set-screen-share-source')!(event, id),
   };
@@ -233,5 +242,95 @@ describe('screen share picker', () => {
 
     assert.isEmpty((await picker.listSources()).sources);
     assert.isTrue(getSources.notCalled);
+  });
+});
+
+describe('screen share on a desktop portal (Wayland)', () => {
+  afterEach(() => {
+    Sinon.restore();
+  });
+
+  it('is detected the way WebRTC decides to capture through the portal', () => {
+    const wayland = { XDG_SESSION_TYPE: 'wayland', WAYLAND_DISPLAY: 'wayland-0' };
+    assert.isTrue(capturesThroughPortal('linux', wayland));
+    assert.isFalse(capturesThroughPortal('linux', { XDG_SESSION_TYPE: 'x11', DISPLAY: ':0' }));
+    assert.isFalse(capturesThroughPortal('linux', { XDG_SESSION_TYPE: 'wayland' }));
+    assert.isFalse(capturesThroughPortal('linux', { WAYLAND_DISPLAY: 'wayland-0' }));
+    assert.isFalse(capturesThroughPortal('linux', {}));
+    assert.isFalse(capturesThroughPortal('darwin', wayland));
+    assert.isFalse(capturesThroughPortal('win32', wayland));
+  });
+
+  it('tells the renderer which mode it is in', () => {
+    assert.strictEqual(setup(undefined, undefined, true).mode(), 'portal');
+    assert.strictEqual(setup(undefined, undefined, false).mode(), 'picker');
+  });
+
+  it('grants the source chosen in the portal, asking for it once and without thumbnails', async () => {
+    const getSources = Sinon.stub().resolves([fakeSource('screen:7')]);
+    const portal = setup(getSources, undefined, true);
+
+    const granted = await portal.requestDisplayLater();
+
+    assert.strictEqual((granted?.video as DesktopCapturerSource | undefined)?.id, 'screen:7');
+    assert.isTrue(getSources.calledOnce);
+    assert.deepEqual(getSources.firstCall.args[0], {
+      types: ['screen', 'window'],
+      thumbnailSize: { width: 0, height: 0 },
+    });
+  });
+
+  it('declines quietly when the portal returns nothing', async () => {
+    const portal = setup(Sinon.stub().resolves([]), undefined, true);
+
+    assert.isNull(await portal.requestDisplayLater());
+  });
+
+  it('declines quietly when the portal dialog is cancelled', async () => {
+    const portal = setup(
+      Sinon.stub().rejects(new Error('Failed to get sources.')),
+      undefined,
+      true
+    );
+
+    assert.isNull(await portal.requestDisplayLater());
+  });
+
+  it("does not use Session's picker: no listing, no selection", async () => {
+    const getSources = Sinon.stub().resolves([fakeSource('screen:1')]);
+    const portal = setup(getSources, undefined, true);
+
+    const listed = await portal.listSources();
+    assert.isEmpty(listed.sources);
+    assert.isFalse(await portal.pick('screen:1'));
+    assert.isTrue(getSources.notCalled, 'listing must not open the portal');
+  });
+
+  it('keeps the frame, gesture and audio checks, without opening the portal', async () => {
+    const getSources = Sinon.stub().resolves([fakeSource('screen:1')]);
+    const portal = setup(getSources, undefined, true);
+
+    assert.isNull(await portal.requestDisplayLater({ userGesture: false }));
+    assert.isNull(await portal.requestDisplayLater({ audioRequested: true }));
+    assert.isNull(await portal.requestDisplayLater({ frame: null as any }));
+    assert.isTrue(getSources.notCalled);
+  });
+
+  it('declines a portal choice that arrives after the page went away', async () => {
+    let resolveSources: (sources: Array<DesktopCapturerSource>) => void = () => {};
+    const portal = setup(
+      Sinon.stub().returns(
+        new Promise<Array<DesktopCapturerSource>>(resolve => {
+          resolveSources = resolve;
+        })
+      ),
+      undefined,
+      true
+    );
+    const response = portal.requestDisplayLater();
+    (portal.mainFrame as { url: string }).url = 'file:///session/other.html';
+    resolveSources([fakeSource('screen:1')]);
+
+    assert.isNull(await response);
   });
 });

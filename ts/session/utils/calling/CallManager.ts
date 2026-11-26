@@ -328,7 +328,11 @@ function beginVideoChange() {
   return { id, current, install };
 }
 
-export async function startScreenShare(sourceId: string) {
+/**
+ * @param sourceId the source picked in Session's picker, or null when the OS shows its own picker
+ * (Wayland's desktop portal) as part of getDisplayMedia().
+ */
+export async function startScreenShare(sourceId: string | null) {
   if (isScreenSharing || pendingShare !== null) {
     return;
   }
@@ -338,7 +342,7 @@ export async function startScreenShare(sourceId: string) {
   }
   pendingShare = change.id;
   try {
-    if (!(await setScreenShareSource(sourceId)) || !change.current()) {
+    if (sourceId !== null && (!(await setScreenShareSource(sourceId)) || !change.current())) {
       return;
     }
     const capture = await navigator.mediaDevices.getDisplayMedia({ video: true, audio: false });

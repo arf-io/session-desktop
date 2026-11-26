@@ -15,6 +15,7 @@ import { SessionLucideIconButton } from '../icon/SessionIconButton';
 import { LUCIDE_ICONS_UNICODE } from '../icon/lucide';
 import { tr } from '../../localization/localeTools';
 import { ScreenSharePicker } from './ScreenSharePicker';
+import { getScreenShareMode, ScreenShareMode } from '../../util/screenShare';
 
 const VideoInputMenu = ({
   triggerId,
@@ -291,7 +292,27 @@ export const ScreenShareButton = ({
   isScreenSharing: boolean;
 }) => {
   const [pickerOpen, setPickerOpen] = useState(false);
+  const [mode, setMode] = useState<ScreenShareMode | null>(null);
   const label = isScreenSharing ? tr('callsStopSharing') : tr('callsShareScreen');
+
+  useEffect(() => {
+    let mounted = true;
+    async function loadMode() {
+      let value: ScreenShareMode = 'picker';
+      try {
+        value = await getScreenShareMode();
+      } catch (e) {
+        window.log?.warn('screen share: could not read the share mode:', e?.message);
+      }
+      if (mounted) {
+        setMode(value);
+      }
+    }
+    void loadMode();
+    return () => {
+      mounted = false;
+    };
+  }, []);
 
   return (
     <>
@@ -319,8 +340,14 @@ export const ScreenShareButton = ({
               void CallManager.stopScreenShare();
               return;
             }
+            if (mode === 'portal') {
+              // the OS shows its own picker, from inside getDisplayMedia()
+              void CallManager.startScreenShare(null);
+              return;
+            }
             setPickerOpen(true);
           }}
+          disabled={!isScreenSharing && mode === null}
           iconColor={
             isScreenSharing
               ? 'var(--danger-color)'
