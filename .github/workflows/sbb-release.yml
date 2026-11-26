@@ -136,8 +136,12 @@ jobs:
         include:
           - architecture: arm64
             runner: macos-15
+            mac_args: ''
           - architecture: x64
             runner: macos-15-intel
+            # zip only: building the dmg on the Intel runners fails intermittently when hdiutil
+            # cannot detach the image ("Resource busy")
+            mac_args: '--mac zip --x64'
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 60
     env:
@@ -163,7 +167,7 @@ jobs:
         run: |
           source ./build/setup-mac-certificate.sh
           # shellcheck disable=SC2086 # FEED is a list of flags
-          pnpm build-release-base --publish=never --config.mac.bundleVersion=${{ github.run_number }} $FEED
+          pnpm build-release-base --publish=never ${{ matrix.mac_args }} --config.mac.bundleVersion=${{ github.run_number }} $FEED
       - name: Upload to release
         # latest-mac.yml is not uploaded: arm64 and x64 would overwrite each other, and macOS only
         # auto-updates signed apps anyway (see docs/MODIFICATIONS.md, Releases)
@@ -184,4 +188,3 @@ jobs:
           sha256sum -- * | grep -v SHA256SUMS > SHA256SUMS.txt
           gh release upload "$TAG" -R "$PUBLIC_REPO" SHA256SUMS.txt --clobber
           gh release edit "$TAG" -R "$PUBLIC_REPO" --draft=false --prerelease=false --latest
-
