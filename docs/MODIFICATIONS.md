@@ -203,14 +203,14 @@ original verification record: [`docs/TDD-multi-account.md`](TDD-multi-account.md
 
 ## 3. Fork infrastructure (`session-but-better` only)
 
-| File                                  | Purpose                                                                                |
-| ------------------------------------- | -------------------------------------------------------------------------------------- |
-| `README.md`                           | this fork's README                                                                     |
-| `docs/MODIFICATIONS.md`               | this document                                                                          |
-| `.github/workflows/upstream-sync.yml` | polls upstream every 15 min; mirror, merge, verify, agent, PR                          |
-| `.github/sbb/upstream-sync.sh`        | the sync logic (`mirror`, `prepare`, `check`, `check-docs`)                            |
-| `.github/workflows/sbb-release.yml`   | builds Windows, macOS and Linux for a `v*-better` tag and publishes the GitHub Release |
-| `.github/workflows/sbb-tag.yml`       | tags every new product version on `session-but-better`                                 |
+| File                                  | Purpose                                                                                                       |
+| ------------------------------------- | ------------------------------------------------------------------------------------------------------------- |
+| `README.md`                           | this fork's README                                                                                            |
+| `docs/MODIFICATIONS.md`               | this document                                                                                                 |
+| `.github/workflows/upstream-sync.yml` | polls upstream every 15 min; mirror, merge, verify, agent, PR                                                 |
+| `.github/sbb/upstream-sync.sh`        | the sync logic (`mirror`, `prepare`, `check`, `check-docs`)                                                   |
+| `.github/workflows/sbb-release.yml`   | builds Windows, macOS and Linux for a `v*-better` tag and publishes the GitHub Release                        |
+| `.github/workflows/sbb-tag.yml`       | tags every new product version on `session-but-better`                                                        |
 
 The feature branches `full-screen-chat` and `multi-account` carry only upstream plus their own
 feature, with none of this infrastructure, so each stays a clean candidate for upstream.

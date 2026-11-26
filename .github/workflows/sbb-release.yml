@@ -184,3 +184,4 @@ jobs:
           sha256sum -- * | grep -v SHA256SUMS > SHA256SUMS.txt
           gh release upload "$TAG" -R "$PUBLIC_REPO" SHA256SUMS.txt --clobber
           gh release edit "$TAG" -R "$PUBLIC_REPO" --draft=false --prerelease=false --latest
+
