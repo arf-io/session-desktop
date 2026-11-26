@@ -204,7 +204,7 @@ const AccountRow = ({ account, onChanged }: { account: AccountSummary; onChanged
     >
       <RowText>
         {draftLabel === null ? (
-          <Name>{account.displayName || account.label}</Name>
+          <Name>{account.label || account.displayName}</Name>
         ) : (
           <RenameInput
             autoFocus={true}
@@ -215,6 +215,11 @@ const AccountRow = ({ account, onChanged }: { account: AccountSummary; onChanged
             onBlur={commitRename}
             onKeyDown={e => {
               e.stopPropagation();
+              if (e.key === 'Enter' || e.key === 'Escape') {
+                // the input unmounts on this key, and the focus trap hands focus to the modal's
+                // close button; without this, the same key press would then activate that button
+                e.preventDefault();
+              }
               if (e.key === 'Enter') {
                 commitRename();
               } else if (e.key === 'Escape') {
@@ -246,7 +251,7 @@ const AccountRow = ({ account, onChanged }: { account: AccountSummary; onChanged
           title={RENAME}
           ariaLabel={RENAME}
           iconColor="var(--text-secondary-color)"
-          onClick={() => setDraftLabel(account.displayName || account.label)}
+          onClick={() => setDraftLabel(account.label || account.displayName || '')}
         />
 
         {account.isCurrent || account.isDefault ? null : (
