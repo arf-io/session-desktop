@@ -38,8 +38,9 @@ permissions:
 
 jobs:
   mirror:
-    # automation runs only in the repository that opts in (repository variable SBB_AUTOMATION=true)
-    if: vars.SBB_AUTOMATION == 'true'
+    # The primary sync runs outside this repository. This copy is a fallback that runs only when
+    # the repository variables SBB_AUTOMATION and SBB_GITHUB_SYNC are both 'true'.
+    if: vars.SBB_AUTOMATION == 'true' && vars.SBB_GITHUB_SYNC == 'true'
     runs-on: ubuntu-22.04
     timeout-minutes: 5
     outputs:

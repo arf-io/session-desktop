@@ -48,6 +48,7 @@ jobs:
 
           last=$(git describe --tags --match 'v*-better*' --abbrev=0 HEAD 2>/dev/null || true)
           if [ -n "$last" ]; then
+            # automation, CI and docs changes are not a new version of the app
             code=$(git diff --name-only "$last..HEAD" | grep -vE '^(docs/|\.github/)|\.md$' || true)
             if [ -z "$code" ]; then
               echo "only docs/CI changed since $last; not tagging"; exit 0
@@ -58,7 +59,8 @@ jobs:
           if ! git rev-parse -q --verify "refs/tags/v${version}-better" >/dev/null; then
             tag="v${version}-better"
           else
-            n=$(git tag -l "v${version}-better.*" | sed "s/^v${version}-better\.//" | grep -E '^[0-9]+$' | sort -n | tail -1)
+            # `|| true`: with no numbered tag yet, grep matches nothing, which pipefail would treat as fatal
+            n=$( (git tag -l "v${version}-better.*" | sed "s/^v${version}-better\.//" | grep -E '^[0-9]+$' || true) | sort -n | tail -1)
             tag="v${version}-better.$(( ${n:-1} + 1 ))"
           fi
 

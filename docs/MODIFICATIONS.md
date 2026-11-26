@@ -203,14 +203,14 @@ original verification record: [`docs/TDD-multi-account.md`](TDD-multi-account.md
 
 ## 3. Fork infrastructure (`session-but-better` only)
 
-| File                                  | Purpose                                                                                                       |
-| ------------------------------------- | ------------------------------------------------------------------------------------------------------------- |
-| `README.md`                           | this fork's README                                                                                            |
-| `docs/MODIFICATIONS.md`               | this document                                                                                                 |
-| `.github/workflows/upstream-sync.yml` | polls upstream every 15 min; mirror, merge, verify, agent, PR                                                 |
-| `.github/sbb/upstream-sync.sh`        | the sync logic (`mirror`, `prepare`, `check`, `check-docs`)                                                   |
-| `.github/workflows/sbb-release.yml`   | builds Windows, macOS and Linux for a `v*-better` tag and publishes the GitHub Release                        |
-| `.github/workflows/sbb-tag.yml`       | tags every new product version on `session-but-better`                                                        |
+| File                                  | Purpose                                                                                |
+| ------------------------------------- | -------------------------------------------------------------------------------------- |
+| `README.md`                           | this fork's README                                                                     |
+| `docs/MODIFICATIONS.md`               | this document                                                                          |
+| `.github/workflows/upstream-sync.yml` | fallback upstream sync (off unless `SBB_GITHUB_SYNC=true`)                             |
+| `.github/sbb/upstream-sync.sh`        | the sync logic (`mirror`, `prepare`, `check`, `check-docs`)                            |
+| `.github/workflows/sbb-release.yml`   | builds Windows, macOS and Linux for a `v*-better` tag and publishes the GitHub Release |
+| `.github/workflows/sbb-tag.yml`       | tags every new product version on `session-but-better`                                 |
 
 The feature branches `full-screen-chat` and `multi-account` carry only upstream plus their own
 feature, with none of this infrastructure, so each stays a clean candidate for upstream.
@@ -222,19 +222,17 @@ feature, with none of this infrastructure, so each stays a clean candidate for u
 - For each branch, upstream (plus that branch's other sources) is merged on
   `upstream-sync/<branch>` and verified with upstream CI's own commands: `pnpm build`, `pnpm test`,
   `pnpm lint`, and no files changed by the formatter. This document's coverage is checked too.
-- A Claude agent runs **only** on a conflict or a red check. Upstream wins: our features are
-  re-applied on top with the smallest change, and wire formats, schema and signalling are never
-  changed (the `screenShare` field above is the one sanctioned addition).
-- The result is always a PR, never a direct push. A red result becomes a draft labelled
-  `needs-human`, or an issue if nothing could be merged.
-- Automation runs only where the repository variable `SBB_AUTOMATION` is `true` (set on
-  arf-io/session-desktop). Repository secrets:
-  - `SYNC_TOKEN`: a fine-grained PAT on this repository with Contents, Pull requests and
-    Workflows set to read/write. The workflows fall back to Actions' own token, but that token
-    can't push upstream commits that touch `.github/workflows`. And because the arf-io
-    organisation does not allow Actions to create pull requests, sync PRs need this token too
-    (or that organisation setting enabled).
-  - `ANTHROPIC_API_KEY` or `CLAUDE_CODE_OAUTH_TOKEN`: only for the conflict/failure agent.
+- Conflicts and red checks are resolved by an implementing agent and checked by an adversarial
+  review from a different model vendor, until the checks pass and the review approves. Upstream
+  wins: our features are re-applied on top with the smallest change, and wire formats, schema
+  and signalling are never changed (the `screenShare` field above is the one sanctioned
+  addition). Commits are authored by Damien Heiser, with no tool attribution.
+- The result is always a reviewed PR, never a direct push to our branches.
+- The primary sync runs in ARF's private automation, outside this repository.
+  `.github/workflows/upstream-sync.yml` is a fallback, run only when the repository variables
+  `SBB_AUTOMATION` and `SBB_GITHUB_SYNC` are both `true`. It needs a `SYNC_TOKEN` PAT (Contents,
+  Pull requests and Workflows read/write) to open PRs, and `ANTHROPIC_API_KEY` or
+  `CLAUDE_CODE_OAUTH_TOKEN` for its agent.
 
 ### Releases
 
