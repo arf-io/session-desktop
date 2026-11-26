@@ -13,6 +13,7 @@ import {
   readRegistry,
   renameAccount,
   resetAccountsModuleForTesting,
+  resolveSelectedAccount,
   SPAWNED_SIBLING_ARG,
 } from '../../../../node/config/profiles';
 import {
@@ -21,6 +22,7 @@ import {
   isBackgroundRequest,
   launchAccount,
   markAccountRevealRequested,
+  pinAccountForUpdateRelaunch,
   resetAccountProcessStateForTesting,
   shouldHideWindowOnClose,
   shouldShowWindowsWhenCreated,
@@ -156,6 +158,18 @@ describe('multi-account processes (account_process)', () => {
         env: {},
       });
       expect(args).to.deep.equal(['--use-tray-icon', `${PROFILE_ARG_PREFIX}${me.id}`]);
+    });
+
+    it('leaves an argument-less updater relaunch pinned to this account', () => {
+      const me = getSelectedAccount();
+      const other = addAccount();
+      pinAccountForUpdateRelaunch();
+      markAccountUsed(other.id); // another account became the active one afterwards
+
+      // the updater starts the new version with a copy of our environment and no arguments
+      process.argv = [savedArgv[0]];
+      resetAccountsModuleForTesting(appData);
+      expect(resolveSelectedAccount().id).to.equal(me.id);
     });
 
     it('comes back on screen, and keeps the flag that stops it fanning out again', () => {

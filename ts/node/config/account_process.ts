@@ -234,15 +234,22 @@ export function startBackgroundAccounts() {
 
 /**
  * The updater's relaunch cannot be given arguments: Squirrel.Mac, the NSIS installer and the
- * AppImage updater all start the app with their own command line. It therefore comes back as
- * whichever account the registry's `activeId` names, so point that at this account as the update
- * starts. Another account changing `activeId` in the moment between this and the relaunch would
- * still win; that window is the residual risk.
+ * AppImage updater all start the app with their own command line. Two pins, because they reach
+ * different relaunchers:
+ *
+ * - `SESSION_PROFILE` in this process's environment, which is consulted before `activeId`. The
+ *   AppImage updater spawns the new AppImage, and the NSIS updater its installer, with a copy of
+ *   this environment, and the AppImage one does so *before* `before-quit-for-update` fires.
+ * - `activeId` set to this account on `before-quit-for-update`, for Squirrel.Mac, whose relaunch
+ *   does not inherit our environment and happens after this process has exited. Another account
+ *   changing `activeId` in the moment between the two would still win.
  */
 export function pinAccountForUpdateRelaunch() {
+  const me = getSelectedAccount().id;
+  process.env.SESSION_PROFILE = me;
   try {
     autoUpdater.on('before-quit-for-update', () => {
-      markAccountUsed(getSelectedAccount().id);
+      markAccountUsed(me);
     });
   } catch (e) {
     console.error('accounts: could not watch for an update relaunch', e?.message);
