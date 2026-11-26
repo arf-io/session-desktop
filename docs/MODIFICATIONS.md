@@ -33,10 +33,9 @@ call a Session, but Better client and see nothing unusual.
 
 ## 1. Fullscreen calls and screen sharing (`full-screen-chat`)
 
-Origin: upstream [PR #2065](https://github.com/session-foundation/session-desktop/pull/2065)
-(branch `calls/fullscreen-sharing-1.18.5` on this fork), itself a port of the calling half of
-closed PR #2015. While #2065 is open, the sync merges its branch into `full-screen-chat`. Once
-upstream merges it, the feature arrives through upstream itself and this section shrinks.
+Origin: ARF's calling work, first offered upstream as PR #2015 and then PR #2065. Both are
+closed, so the feature is maintained here on `full-screen-chat`, which merges upstream like
+every other branch.
 
 ### Behaviour
 
@@ -92,7 +91,7 @@ upstream merges it, the feature arrives through upstream itself and this section
 ### Verified
 
 - Unit tests: 16 new, plus upstream's suite (`pnpm test`).
-- Recorded in PR #2065: two local WebRTC peers in Electron 40, with the receiver showing a
+- Recorded during the original review: two local WebRTC peers in Electron 40, with the receiver showing a
   synthetic shared window, then the prior camera; camera-off returns to black; cancelling keeps
   the call; a late capture after hang-up is discarded; packaged arm64 macOS app launched.
 - **On this branch, 2026-11-25** (macOS, Electron 40, the dev build of `session-but-better`): a
@@ -111,7 +110,7 @@ upstream merges it, the feature arrives through upstream itself and this section
 ### Known limits
 
 - "Quit while in a fullscreen call, then reopen" (the window-config guard) was not
-  re-tested on this branch; PR #2065 covers it in review only.
+  re-tested on this branch; it was covered in the original review only.
 - A share between two physical devices with a real OS-picked window on the current revision is a
   manual check that hasn't been repeated here.
 - Calls are one-to-one, as upstream. Group calls are on the backlog.
@@ -239,20 +238,18 @@ feature, with none of this infrastructure, so each stays a clean candidate for u
   `v1.18.5-better.2`, `.3`, and so on. `sbb-tag.yml` creates the tag automatically whenever
   `session-but-better` gains code changes (doc-only and CI-only changes are not tagged). Each tag
   is annotated with the upstream base and the feature heads it contains.
-- **Where releases live.** Public releases are on
-  [arf-io/session-desktop-enhancements](https://github.com/arf-io/session-desktop-enhancements),
-  ARF's public repository for this work, which carries only clean, sanitized commits authored as
-  the organisation. The development repository (arf-io/session-desktop) is the working copy.
-  `sbb-release.yml` builds here, then creates the GitHub Release in the public repository (tag on
-  its `main`, notes naming only public commits) and uploads the installers there. This needs the
-  `RELEASE_TOKEN` secret: a fine-grained PAT on that repository with Contents set to read/write.
+- **Where releases live.** [arf-io/session-desktop](https://github.com/arf-io/session-desktop)
+  is the public home of Session, but Better: full source, all branches, tags and releases, with
+  clean history (every commit of ours authored `Damien Heiser <dc@arf.io>`, with no tool
+  attribution). The automation runs only in the repository whose `SBB_AUTOMATION` variable is
+  `true`.
 - `sbb-release.yml` builds on a new tag:
   - Windows: x64 NSIS installer;
   - macOS: arm64 and x64 DMG and zip;
   - Linux: deb, rpm and AppImage.
     It then attaches everything to the GitHub Release for that tag.
-- **The in-app updater points at arf-io/session-desktop-enhancements.** Release builds set electron-builder's
-  update feed at build time (`--config.publish.owner/repo`, default `arf-io/session-desktop-enhancements`,
+- **The in-app updater points at arf-io/session-desktop.** Release builds set electron-builder's
+  update feed at build time (`--config.publish.owner/repo`, default `arf-io/session-desktop`,
   overridable with the `RELEASE_OWNER` / `RELEASE_REPO` repository variables); `package.json` is
   not edited. An installed Session, but Better therefore never "updates" itself to plain upstream
   Session. How an update is found, unchanged from upstream:

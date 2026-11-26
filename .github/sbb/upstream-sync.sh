@@ -11,7 +11,7 @@
 #                                        docs/MODIFICATIONS.md (skipped where that file is absent)
 #
 # Sources merged into each target (in order):
-#   full-screen-chat    upstream/dev, origin/$FSC_TRACK_BRANCH (the upstream PR #2065 branch)
+#   full-screen-chat    upstream/dev
 #   multi-account       upstream/dev
 #   session-but-better  upstream/dev, origin/full-screen-chat, origin/multi-account
 #
@@ -23,7 +23,6 @@ set -euo pipefail
 UPSTREAM_URL="${UPSTREAM_URL:-https://github.com/session-foundation/session-desktop.git}"
 UPSTREAM_BRANCH="${UPSTREAM_BRANCH:-dev}"
 MIRROR_BRANCH="${MIRROR_BRANCH:-dev}"
-FSC_TRACK_BRANCH="${FSC_TRACK_BRANCH:-calls/fullscreen-sharing-1.18.5}"
 OUT="${GITHUB_OUTPUT:-/dev/stdout}"
 
 log() { printf '[sync] %s\n' "$*" >&2; }
@@ -56,8 +55,7 @@ cmd_mirror() {
 
 sources_for() {
   case "$1" in
-    full-screen-chat) echo "upstream/${UPSTREAM_BRANCH} origin/${FSC_TRACK_BRANCH}" ;;
-    multi-account) echo "upstream/${UPSTREAM_BRANCH}" ;;
+    full-screen-chat | multi-account) echo "upstream/${UPSTREAM_BRANCH}" ;;
     session-but-better) echo "upstream/${UPSTREAM_BRANCH} origin/full-screen-chat origin/multi-account" ;;
     *) log "unknown target '$1'"; exit 2 ;;
   esac

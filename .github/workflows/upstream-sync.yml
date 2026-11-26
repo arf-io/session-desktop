@@ -4,7 +4,7 @@
 #   1. fast-forwards our `dev` to upstream/dev (a pure mirror; it never carries our code)
 #   2. for each of our branches, merges upstream (plus that branch's other sources) on
 #      `upstream-sync/<branch>`, then builds, tests and lints exactly as upstream CI does
-#   3. only if the merge conflicts or a check fails, a Claude agent resolves/fixes it
+#   3. only if the merge conflicts or a check fails, an agent resolves/fixes it
 #   4. opens (or updates) a PR into the branch; nothing is ever pushed to our branches directly
 #
 # Secrets:
@@ -35,11 +35,10 @@ permissions:
   pull-requests: write
   id-token: write
 
-env:
-  FSC_TRACK_BRANCH: calls/fullscreen-sharing-1.18.5
-
 jobs:
   mirror:
+    # automation runs only in the repository that opts in (repository variable SBB_AUTOMATION=true)
+    if: vars.SBB_AUTOMATION == 'true'
     runs-on: ubuntu-22.04
     timeout-minutes: 5
     outputs:
@@ -84,8 +83,8 @@ jobs:
       - name: Identity
         if: steps.sel.outputs.run == 'true'
         run: |
-          git config user.name "session-but-better-sync[bot]"
-          git config user.email "session-but-better-sync@users.noreply.github.com"
+          git config user.name "Damien Heiser"
+          git config user.email "dc@arf.io"
           git config rerere.enabled true
 
       - name: Merge upstream into upstream-sync/${{ matrix.target }}
@@ -133,7 +132,7 @@ jobs:
             Sources still to merge after this one, in order: ${{ steps.prep.outputs.sources }}
 
             What our branches add on top of upstream (read docs/TDD-*.md on the branch for the design):
-            - full-screen-chat: real fullscreen calls and window/screen sharing (upstream PR #2065).
+            - full-screen-chat: real fullscreen calls and window/screen sharing.
             - multi-account: multiple live accounts, one process + data directory per account
               (ts/node/config/profiles.ts, ts/util/accounts.ts, AccountSwitcherModal, main_node.ts).
             - session-but-better: both of the above.
@@ -153,6 +152,9 @@ jobs:
             4. Finish every merge: resolve, `git add`, `git commit --no-edit`; then merge each remaining
                source listed above the same way (`git merge --no-ff --no-edit <source>`), skipping any
                already contained in HEAD.
+            4b. Commits are authored "Damien Heiser <dc@arf.io>" (already configured). Never add
+               Co-Authored-By trailers, "Generated with" lines or any other agent attribution to
+               commits, PR text or files.
             5. Commit messages must pass the repo's commitlint (conventional, lower-case subject),
                e.g. "fix(sync): keep account switcher working after upstream modal refactor".
                Verify with: pnpm run build && pnpm run test && pnpm run lint && git diff --exit-code

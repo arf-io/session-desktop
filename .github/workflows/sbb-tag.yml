@@ -21,6 +21,7 @@ permissions:
 
 jobs:
   tag:
+    if: vars.SBB_AUTOMATION == 'true'
     runs-on: ubuntu-22.04
     timeout-minutes: 5
     steps:
@@ -34,8 +35,8 @@ jobs:
       - name: Decide and create the tag
         run: |
           set -euo pipefail
-          git config user.name "session-but-better-release[bot]"
-          git config user.email "session-but-better-release@users.noreply.github.com"
+          git config user.name "Damien Heiser"
+          git config user.email "dc@arf.io"
           git fetch --quiet --no-tags https://github.com/session-foundation/session-desktop.git +refs/heads/dev:refs/remotes/upstream/dev
 
           if git tag --points-at HEAD | grep -qE -- '-better(\.[0-9]+)?$'; then

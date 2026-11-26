@@ -20,7 +20,7 @@ merged after review.
 
 ## Download
 
-Releases are published at **[arf-io/session-desktop-enhancements](https://github.com/arf-io/session-desktop-enhancements/releases)**.
+Releases are published at **[arf-io/session-desktop](https://github.com/arf-io/session-desktop/releases)**.
 Each carries upstream's version tag with `-better` on the end: `v1.18.5-better` is Session, but
 Better built on upstream Session 1.18.5. A further release on the same upstream version is
 `v1.18.5-better.2`, and so on. Builds are provided for:
@@ -39,7 +39,7 @@ not and cannot be. Each release has a `SHA256SUMS.txt`: compare it with
 right-click → **Open**, and macOS won't install updates to them automatically.
 
 **Updates.** The in-app updater installs releases from
-[arf-io/session-desktop-enhancements](https://github.com/arf-io/session-desktop-enhancements/releases), never from upstream,
+[arf-io/session-desktop](https://github.com/arf-io/session-desktop/releases), never from upstream,
 so an update never replaces Session, but Better with plain Session. As in upstream, the app first
 asks Session's file server whether a newer Session version exists. It offers an update once the
 matching `-better` release is published.
@@ -63,13 +63,13 @@ known limits, in **[docs/MODIFICATIONS.md](docs/MODIFICATIONS.md)**.
 
 ## Branches
 
-| Branch               | Contents                                                                                                                                 |
-| -------------------- | ---------------------------------------------------------------------------------------------------------------------------------------- |
-| `session-but-better` | **the product**: upstream plus every feature below (default branch)                                                                      |
-| `full-screen-chat`   | upstream plus fullscreen calls and screen sharing ([upstream PR #2065](https://github.com/session-foundation/session-desktop/pull/2065)) |
-| `multi-account`      | upstream plus multiple live accounts                                                                                                     |
-| `dev`                | an exact mirror of upstream `dev`, never modified                                                                                        |
-| `upstream-sync/*`    | automated upstream merges awaiting review                                                                                                |
+| Branch               | Contents                                                            |
+| -------------------- | ------------------------------------------------------------------- |
+| `session-but-better` | **the product**: upstream plus every feature below (default branch) |
+| `full-screen-chat`   | upstream plus fullscreen calls and screen sharing                   |
+| `multi-account`      | upstream plus multiple live accounts                                |
+| `dev`                | an exact mirror of upstream `dev`, never modified                   |
+| `upstream-sync/*`    | automated upstream merges awaiting review                           |
 
 Branches only ever _merge_ upstream; nothing is rebased or force-pushed.
 See [docs/MODIFICATIONS.md § Fork infrastructure](docs/MODIFICATIONS.md#3-fork-infrastructure-session-but-better-only)
@@ -83,9 +83,9 @@ Then `pnpm install`, `pnpm build`, `pnpm test`, and `pnpm start-prod`, which run
 separate development data directory. `pnpm build-release` produces installers for the platform
 you build on.
 
-The published source is at
-[arf-io/session-desktop-enhancements](https://github.com/arf-io/session-desktop-enhancements),
-with instructions for applying it to the matching upstream release.
+```sh
+git clone --recursive https://github.com/arf-io/session-desktop.git   # default branch: session-but-better
+```
 
 ## License
 
