@@ -95,8 +95,19 @@ upstream merges it, the feature arrives through upstream itself and this section
 - Recorded in PR #2065: two local WebRTC peers in Electron 40, with the receiver showing a
   synthetic shared window, then the prior camera; camera-off returns to black; cancelling keeps
   the call; a late capture after hang-up is discarded; packaged arm64 macOS app launched.
-- On this branch, 2026-11-25: build, 1071 unit tests and lint green; the app launched and its call
-  controls were present.
+- **On this branch, 2026-11-25** (macOS, Electron 40, the dev build of `session-but-better`): a
+  real call between two throwaway accounts over the Session network, each running as its own
+  account process (§2).
+  - Build, 1071 unit tests and lint are green.
+  - Both ends showed the fullscreen and share buttons.
+  - Fullscreen covered the whole 1920×1200 display, with the exit pill.
+  - Opened from inside fullscreen, the picker stayed in fullscreen and listed real sources.
+  - Sharing a window delivered live 1868×1198 video to the other account, while the sharer stayed
+    fullscreen.
+  - Stopping the share restored the prior camera-off video.
+  - Esc left fullscreen and kept the call.
+  - Hang-up ended the call on both sides.
+  - Fullscreen was not written to the window config.
 
 ### Known limits
 
