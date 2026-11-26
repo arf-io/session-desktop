@@ -239,16 +239,20 @@ feature, with none of this infrastructure, so each stays a clean candidate for u
   `v1.18.5-better.2`, `.3`, and so on. `sbb-tag.yml` creates the tag automatically whenever
   `session-but-better` gains code changes (doc-only and CI-only changes are not tagged). Each tag
   is annotated with the upstream base and the feature heads it contains.
-- **Where releases live.** Public releases, with clean and sanitized commits, are published on
-  [arf-io/session-desktop](https://github.com/arf-io/session-desktop). The development
-  repository (arf-io/session-desktop) is the private working copy.
+- **Where releases live.** Public releases are on
+  [arf-io/session-desktop-enhancements](https://github.com/arf-io/session-desktop-enhancements),
+  ARF's public repository for this work, which carries only clean, sanitized commits authored as
+  the organisation. The development repository (arf-io/session-desktop) is the working copy.
+  `sbb-release.yml` builds here, then creates the GitHub Release in the public repository (tag on
+  its `main`, notes naming only public commits) and uploads the installers there. This needs the
+  `RELEASE_TOKEN` secret: a fine-grained PAT on that repository with Contents set to read/write.
 - `sbb-release.yml` builds on a new tag:
   - Windows: x64 NSIS installer;
   - macOS: arm64 and x64 DMG and zip;
   - Linux: deb, rpm and AppImage.
     It then attaches everything to the GitHub Release for that tag.
-- **The in-app updater points at arf-io/session-desktop.** Release builds set electron-builder's
-  update feed at build time (`--config.publish.owner/repo`, default `arf-io/session-desktop`,
+- **The in-app updater points at arf-io/session-desktop-enhancements.** Release builds set electron-builder's
+  update feed at build time (`--config.publish.owner/repo`, default `arf-io/session-desktop-enhancements`,
   overridable with the `RELEASE_OWNER` / `RELEASE_REPO` repository variables); `package.json` is
   not edited. An installed Session, but Better therefore never "updates" itself to plain upstream
   Session. How an update is found, unchanged from upstream:

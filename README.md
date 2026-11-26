@@ -20,7 +20,7 @@ merged after review.
 
 ## Download
 
-Releases are published at **[arf-io/session-desktop](https://github.com/arf-io/session-desktop/releases)**.
+Releases are published at **[arf-io/session-desktop-enhancements](https://github.com/arf-io/session-desktop-enhancements/releases)**.
 Each carries upstream's version tag with `-better` on the end: `v1.18.5-better` is Session, but
 Better built on upstream Session 1.18.5. A further release on the same upstream version is
 `v1.18.5-better.2`, and so on. Builds are provided for:
@@ -39,7 +39,7 @@ not and cannot be. Each release has a `SHA256SUMS.txt`: compare it with
 right-click → **Open**, and macOS won't install updates to them automatically.
 
 **Updates.** The in-app updater installs releases from
-[arf-io/session-desktop](https://github.com/arf-io/session-desktop/releases), never from upstream,
+[arf-io/session-desktop-enhancements](https://github.com/arf-io/session-desktop-enhancements/releases), never from upstream,
 so an update never replaces Session, but Better with plain Session. As in upstream, the app first
 asks Session's file server whether a newer Session version exists. It offers an update once the
 matching `-better` release is published.
@@ -77,20 +77,15 @@ for how the sync, tagging and release automation work.
 
 ## Building from source
 
-The same as upstream (see [CONTRIBUTING.md](CONTRIBUTING.md)):
+Session, but Better is upstream Session Desktop with ARF's changes applied, so it builds exactly as
+upstream does (see [CONTRIBUTING.md](CONTRIBUTING.md)): Node from `.nvmrc` and pnpm via corepack.
+Then `pnpm install`, `pnpm build`, `pnpm test`, and `pnpm start-prod`, which runs against a
+separate development data directory. `pnpm build-release` produces installers for the platform
+you build on.
 
-```sh
-git clone --recursive https://github.com/arf-io/session-desktop.git
-cd session-desktop            # default branch: session-but-better
-# Node version from .nvmrc, pnpm via corepack
-corepack enable
-pnpm install
-pnpm build
-pnpm test
-pnpm start-prod               # runs against a separate development data directory
-```
-
-`pnpm build-release` produces installers for the platform you build on.
+The published source is at
+[arf-io/session-desktop-enhancements](https://github.com/arf-io/session-desktop-enhancements),
+with instructions for applying it to the matching upstream release.
 
 ## License
 

@@ -1,11 +1,18 @@
 # Session, but Better — build Windows, macOS and Linux for a v*-better tag and publish the Release.
 #
 # Same build steps as upstream CI (actions/setup, pnpm build, unit tests, electron-builder), with
-# one difference: the update feed baked into the app points at the public release repository,
-# arf-io/session-desktop (override with the RELEASE_OWNER / RELEASE_REPO repository variables), so
-# an installed Session, but Better never updates itself to plain upstream Session. Releases there
-# must be regular releases, not prereleases: the in-app updater follows GitHub's "latest release". package.json is
-# not edited; the feed is set on the electron-builder command line.
+# one difference: the update feed baked into the app points at ARF's public release repository,
+# arf-io/session-desktop-enhancements (override with the RELEASE_OWNER / RELEASE_REPO repository
+# variables), so an installed Session, but Better never updates itself to plain upstream Session.
+# package.json is not edited; the feed is set on the electron-builder command line.
+#
+# The GitHub Release is created in that public repository, not here: its tag is created on its
+# own `main` (which carries only clean, sanitized commits), and the notes name only public
+# commits. Releases there must be regular releases, not prereleases, because the in-app updater
+# follows GitHub's "latest release".
+#
+# Secret: RELEASE_TOKEN, a fine-grained PAT on arf-io/session-desktop-enhancements with
+# Contents = read/write.
 name: Release
 
 on:
@@ -26,11 +33,12 @@ permissions:
 
 env:
   TAG: ${{ github.event.inputs.tag || github.ref_name }}
-  GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+  GH_TOKEN: ${{ secrets.RELEASE_TOKEN }}
+  PUBLIC_REPO: ${{ vars.RELEASE_OWNER || 'arf-io' }}/${{ vars.RELEASE_REPO || 'session-desktop-enhancements' }}
   FEED: >-
     --config.publish.provider=github
     --config.publish.owner=${{ vars.RELEASE_OWNER || 'arf-io' }}
-    --config.publish.repo=${{ vars.RELEASE_REPO || 'session-desktop' }}
+    --config.publish.repo=${{ vars.RELEASE_REPO || 'session-desktop-enhancements' }}
 
 jobs:
   create_release:
@@ -42,17 +50,25 @@ jobs:
           ref: ${{ env.TAG }}
           fetch-depth: 0
           fetch-tags: true
-      - name: Create draft release
+      - name: Create draft release in the public repository
         run: |
           set -euo pipefail
-          if gh release view "$TAG" >/dev/null 2>&1; then echo "release $TAG exists"; exit 0; fi
+          if gh release view "$TAG" -R "$PUBLIC_REPO" >/dev/null 2>&1; then echo "release $TAG exists"; exit 0; fi
+          git fetch --quiet --no-tags https://github.com/session-foundation/session-desktop.git +refs/heads/dev:refs/remotes/upstream/dev
+          base=$(git merge-base HEAD upstream/dev)
+          version=$(node -p "require('./package.json').version")
+          # public notes: name only public commits (upstream), never this repository's
           {
-            git tag -l --format='%(contents)' "$TAG"
+            echo "Session, but Better ${TAG}: Session Desktop ${version} with ARF's enhancements."
             echo
-            echo "What differs from upstream: [docs/MODIFICATIONS.md](../../blob/$TAG/docs/MODIFICATIONS.md)."
-            echo "Verify downloads against SHA256SUMS.txt. macOS builds are unsigned (right-click → Open)."
+            echo "- Upstream base: [session-foundation/session-desktop@$(git rev-parse --short "$base")](https://github.com/session-foundation/session-desktop/commit/$base) (v${version})"
+            echo "- Fullscreen calls and window/screen sharing, usable together ([upstream PR #2065](https://github.com/session-foundation/session-desktop/pull/2065))"
+            echo "- Multiple live accounts, each in its own process and data directory"
+            echo "- Fully compatible with upstream Session: same network, protocol and database"
+            echo
+            echo "Verify downloads against SHA256SUMS.txt. macOS builds are not notarized: right-click → Open on first launch."
           } > "$RUNNER_TEMP/notes.md"
-          gh release create "$TAG" --draft --verify-tag --title "Session, but Better $TAG" --notes-file "$RUNNER_TEMP/notes.md"
+          gh release create "$TAG" -R "$PUBLIC_REPO" --draft --target main --title "Session, but Better $TAG" --notes-file "$RUNNER_TEMP/notes.md"
 
   linux:
     needs: create_release
@@ -84,7 +100,7 @@ jobs:
           files=(release/*.deb release/*.rpm release/*.AppImage)
           # only the AppImage auto-updates on Linux
           [ "${{ matrix.target }}" = AppImage ] && files+=(release/latest-linux.yml)
-          gh release upload "$TAG" "${files[@]}" --clobber
+          gh release upload "$TAG" -R "$PUBLIC_REPO" "${files[@]}" --clobber
 
   windows:
     needs: create_release
@@ -112,7 +128,7 @@ jobs:
         shell: bash
         run: |
           shopt -s nullglob
-          gh release upload "$TAG" release/*.exe release/*.exe.blockmap release/latest.yml --clobber
+          gh release upload "$TAG" -R "$PUBLIC_REPO" release/*.exe release/*.exe.blockmap release/latest.yml --clobber
 
   mac:
     needs: create_release
@@ -155,7 +171,7 @@ jobs:
         # auto-updates signed apps anyway (see docs/MODIFICATIONS.md, Releases)
         run: |
           shopt -s nullglob
-          gh release upload "$TAG" release/*.dmg release/*.zip release/*.blockmap --clobber
+          gh release upload "$TAG" -R "$PUBLIC_REPO" release/*.dmg release/*.zip release/*.blockmap --clobber
 
   publish:
     needs: [linux, windows, mac]
@@ -166,7 +182,7 @@ jobs:
         run: |
           set -euo pipefail
           mkdir assets && cd assets
-          gh release download "$TAG" -R "${{ github.repository }}"
+          gh release download "$TAG" -R "$PUBLIC_REPO"
           sha256sum -- * | grep -v SHA256SUMS > SHA256SUMS.txt
-          gh release upload "$TAG" SHA256SUMS.txt -R "${{ github.repository }}" --clobber
-          gh release edit "$TAG" -R "${{ github.repository }}" --draft=false
+          gh release upload "$TAG" -R "$PUBLIC_REPO" SHA256SUMS.txt --clobber
+          gh release edit "$TAG" -R "$PUBLIC_REPO" --draft=false --prerelease=false --latest
