@@ -1,11 +1,15 @@
 import { assert } from 'chai';
+import Sinon from 'sinon';
 
 import {
   cameraAfterShareOnRequest,
   cameraShownOnButton,
+  explainScreenShareRefusal,
   remoteScreenShareAfter,
+  screenShareRefusalMessage,
   videoStatusPayload,
 } from '../../../../session/utils/calling/ScreenShare';
+import { TestUtils } from '../../../test-utils';
 
 /**
  * These are the decisions CallManager sends and applies over the data channel. The data channel
@@ -122,5 +126,64 @@ describe('camera button during a screen share', () => {
       }),
       'cam-1'
     );
+  });
+});
+
+describe('screen share refusals in the renderer', () => {
+  beforeEach(() => {
+    TestUtils.stubWindowLog();
+    TestUtils.stubI18n();
+  });
+
+  afterEach(() => {
+    Sinon.restore();
+  });
+
+  it('stays quiet when there is no reason: the user cancelled', () => {
+    assert.isNull(screenShareRefusalMessage(null, true));
+    assert.isNull(screenShareRefusalMessage(null, false));
+  });
+
+  it('has a message for every reason main can record', () => {
+    for (const reason of [
+      'no-permission',
+      'not-allowed',
+      'no-user-gesture',
+      'no-selection',
+      'expired',
+      'no-access',
+    ] as const) {
+      assert.isNotEmpty(screenShareRefusalMessage(reason, false), reason);
+    }
+  });
+
+  it('points macOS users at Screen Recording access', () => {
+    assert.include(screenShareRefusalMessage('no-access', true), 'Screen Recording');
+    assert.notInclude(screenShareRefusalMessage('no-access', false), 'Screen Recording');
+  });
+
+  it('toasts a refusal the user did not cause', async () => {
+    const toast = Sinon.spy();
+    await explainScreenShareRefusal({ take: async () => 'expired', toast, isMac: false });
+    assert.isTrue(toast.calledOnce);
+    assert.strictEqual(toast.firstCall.args[0], 'startScreenShare');
+  });
+
+  it('does not toast a cancel', async () => {
+    const toast = Sinon.spy();
+    await explainScreenShareRefusal({ take: async () => null, toast, isMac: false });
+    assert.isTrue(toast.notCalled);
+  });
+
+  it('does not toast when the reason cannot be read', async () => {
+    const toast = Sinon.spy();
+    await explainScreenShareRefusal({
+      take: async () => {
+        throw new Error('no ipc');
+      },
+      toast,
+      isMac: false,
+    });
+    assert.isTrue(toast.notCalled);
   });
 });

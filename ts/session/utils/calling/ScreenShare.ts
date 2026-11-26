@@ -1,3 +1,8 @@
+import { tr } from '../../../localization/localeTools';
+import { isMacOS } from '../../../OS';
+import { takeScreenShareRefusal, type ScreenShareRefusal } from '../../../util/screenShare';
+import { pushToastError } from '../Toast';
+
 /**
  * Screen-sharing decisions used by CallManager, kept out of it so they can be unit tested
  * without a real RTCPeerConnection and so upstream's CallManager changes as little as possible.
@@ -69,4 +74,50 @@ export function cameraAfterShareOnRequest({
   offId: string;
 }): string {
   return requestedId === offId || cameraIds.includes(requestedId) ? requestedId : cameraAfterShare;
+}
+
+/**
+ * What to tell the user when the main process declined a share; null to stay quiet. No reason
+ * means nothing went wrong from Session's side (a cancelled desktop portal), so nothing is said.
+ */
+export function screenShareRefusalMessage(
+  reason: ScreenShareRefusal | null,
+  isMac: boolean
+): string | null {
+  switch (reason) {
+    case null:
+      return null;
+    case 'no-permission':
+      return tr('callsPermissionsRequiredDescription');
+    case 'no-access':
+      return isMac ? tr('callsScreenRecordingPermissionDescription') : tr('permissionsRequired');
+    case 'not-allowed':
+    case 'no-user-gesture':
+    case 'no-selection':
+    case 'expired':
+    default:
+      return tr('errorGeneric');
+  }
+}
+
+/** Called when a share was declined (getDisplayMedia rejected, or the pick was refused). */
+export async function explainScreenShareRefusal({
+  take = takeScreenShareRefusal,
+  toast = pushToastError,
+  isMac = isMacOS(),
+}: {
+  take?: () => Promise<ScreenShareRefusal | null>;
+  toast?: (id: string, message: string) => void;
+  isMac?: boolean;
+} = {}) {
+  let reason: ScreenShareRefusal | null = null;
+  try {
+    reason = await take();
+  } catch (e) {
+    window.log?.warn('screen share: could not read why the share was declined:', e?.message);
+  }
+  const message = screenShareRefusalMessage(reason, isMac);
+  if (message) {
+    toast('startScreenShare', message);
+  }
 }

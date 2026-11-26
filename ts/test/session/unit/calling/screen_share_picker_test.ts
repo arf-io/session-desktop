@@ -39,7 +39,9 @@ function setup(
       once: Sinon.stub(),
     },
   } as unknown as BrowserWindow;
-  installScreenSharePicker(window, pageURL, { get: () => true } as unknown as UserConfig, {
+  let mediaPermissions = true;
+  const config = { get: (key: string) => key === 'mediaPermissions' && mediaPermissions };
+  installScreenSharePicker(window, pageURL, config as unknown as UserConfig, {
     getSources,
     screenAccess,
     usesPortal: () => usesPortal,
@@ -79,6 +81,10 @@ function setup(
     requestDisplayLater,
     navigate,
     mode: () => handlers.get('get-screen-share-mode')!(event),
+    refusal: () => handlers.get('take-screen-share-refusal')!(event),
+    setMediaPermissions: (value: boolean) => {
+      mediaPermissions = value;
+    },
     listSources: () => handlers.get('get-screen-share-sources')!(event),
     pick: (id: string | null) => handlers.get('set-screen-share-source')!(event, id),
   };
@@ -332,5 +338,103 @@ describe('screen share on a desktop portal (Wayland)', () => {
     resolveSources([fakeSource('screen:1')]);
 
     assert.isNull(await response);
+  });
+});
+
+describe('screen share refusal reasons', () => {
+  afterEach(() => {
+    Sinon.restore();
+  });
+
+  async function picked(access: () => 'granted' | 'denied' = () => 'granted') {
+    const picker = setup(undefined, access);
+    await picker.listSources();
+    assert.isTrue(await picker.pick('screen:1'));
+    return picker;
+  }
+
+  it('records nothing for a granted share', async () => {
+    const picker = await picked();
+    assert.isNotNull(picker.requestDisplay());
+    assert.isNull(await picker.refusal());
+  });
+
+  it('records a selection that expired', async () => {
+    const clock = Sinon.useFakeTimers({ now: 1_000_000 });
+    const picker = await picked();
+    clock.tick(5001);
+    assert.isNull(picker.requestDisplay());
+    assert.strictEqual(await picker.refusal(), 'expired');
+  });
+
+  it('records a request with no selection, e.g. after a navigation cleared it', async () => {
+    const picker = await picked();
+    picker.navigate({ isMainFrame: true, isSameDocument: false });
+    assert.isNull(picker.requestDisplay());
+    assert.strictEqual(await picker.refusal(), 'no-selection');
+  });
+
+  it('records a request without a user gesture', async () => {
+    const picker = await picked();
+    const respond = Sinon.spy();
+    picker.displayHandler({ ...picker.request, userGesture: false }, respond);
+    assert.deepEqual(respond.args, [[null]]);
+    assert.strictEqual(await picker.refusal(), 'no-user-gesture');
+  });
+
+  it('records screen recording access revoked after the pick', async () => {
+    let access: 'granted' | 'denied' = 'granted';
+    const picker = await picked(() => access);
+    access = 'denied';
+    assert.isNull(picker.requestDisplay());
+    assert.strictEqual(await picker.refusal(), 'no-access');
+  });
+
+  it('records the calls permission turned off after the pick', async () => {
+    const picker = await picked();
+    picker.setMediaPermissions(false);
+    assert.isNull(picker.requestDisplay());
+    picker.setMediaPermissions(true);
+    assert.strictEqual(await picker.refusal(), 'no-permission');
+  });
+
+  it('records a pick of a source that is no longer on offer', async () => {
+    const picker = setup();
+    await picker.listSources();
+    assert.isFalse(await picker.pick('screen:99'));
+    assert.strictEqual(await picker.refusal(), 'no-selection');
+  });
+
+  it('records nothing when the picker is closed without a choice', async () => {
+    const picker = setup();
+    await picker.listSources();
+    assert.isFalse(await picker.pick(null));
+    assert.isNull(await picker.refusal());
+  });
+
+  it('hands a reason out once, and a new request starts without one', async () => {
+    const clock = Sinon.useFakeTimers({ now: 1_000_000 });
+    const picker = await picked();
+    clock.tick(5001);
+    picker.requestDisplay();
+    assert.strictEqual(await picker.refusal(), 'expired');
+    assert.isNull(await picker.refusal());
+
+    clock.tick(5001);
+    picker.requestDisplay();
+    await picker.listSources();
+    assert.isTrue(await picker.pick('screen:1'));
+    assert.isNotNull(picker.requestDisplay());
+    assert.isNull(await picker.refusal(), 'a stale reason must not outlive the next request');
+  });
+
+  it('records nothing when the desktop portal is cancelled or returns nothing', async () => {
+    const cancelled = setup(Sinon.stub().rejects(new Error('cancelled')), undefined, true);
+    assert.isNull(await cancelled.requestDisplayLater());
+    assert.isNull(await cancelled.refusal());
+
+    const empty = setup(Sinon.stub().resolves([]), undefined, true);
+    assert.isNull(await empty.requestDisplayLater());
+    assert.isNull(await empty.refusal());
   });
 });

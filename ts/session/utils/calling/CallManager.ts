@@ -41,6 +41,7 @@ import { setScreenShareSource } from '../../../util/screenShare';
 import {
   cameraAfterShareOnRequest,
   cameraShownOnButton,
+  explainScreenShareRefusal,
   remoteScreenShareAfter,
   videoStatusPayload,
 } from './ScreenShare';
@@ -353,8 +354,15 @@ export async function startScreenShare(sourceId: string | null) {
   }
   pendingShare = change.id;
   try {
-    if (sourceId !== null && (!(await setScreenShareSource(sourceId)) || !change.current())) {
-      return;
+    if (sourceId !== null) {
+      const accepted = await setScreenShareSource(sourceId);
+      if (!change.current()) {
+        return;
+      }
+      if (!accepted) {
+        await explainScreenShareRefusal();
+        return;
+      }
     }
     const capture = await navigator.mediaDevices.getDisplayMedia({ video: true, audio: false });
     const track = capture.getVideoTracks()[0];
@@ -382,7 +390,12 @@ export async function startScreenShare(sourceId: string | null) {
     sendVideoStatusViaDataChannel();
     callVideoListeners();
   } catch (error) {
-    if (change.current() && error.name !== 'NotAllowedError' && error.name !== 'AbortError') {
+    if (!change.current()) {
+      // the call ended or the user changed the video since: nothing to report
+    } else if (error.name === 'NotAllowedError' || error.name === 'AbortError') {
+      // declined by our display-media handler: quiet for a cancel, explained otherwise
+      await explainScreenShareRefusal();
+    } else {
       window.log.warn('Could not start screen sharing', error.message);
       ToastUtils.pushToastError('startScreenShare', error.message);
     }

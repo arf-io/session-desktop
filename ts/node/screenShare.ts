@@ -8,7 +8,11 @@ import {
 } from 'electron';
 
 import { UserConfig } from './config/user_config';
-import type { ScreenShareMode, ScreenShareSourcesResult } from '../util/screenShare';
+import type {
+  ScreenShareMode,
+  ScreenShareRefusal,
+  ScreenShareSourcesResult,
+} from '../util/screenShare';
 
 /**
  * Whether Chromium captures through the xdg-desktop-portal (PipeWire) rather than listing sources
@@ -49,6 +53,9 @@ export function installScreenSharePicker(
   let generation = 0;
   let choices: Array<DesktopCapturerSource> = [];
   let selection: { source: DesktopCapturerSource; expires: number } | null = null;
+  // Why the last share was declined, for the renderer to explain. A share the user cancelled
+  // (in the desktop portal) leaves it null, so it stays quiet.
+  let refusal: ScreenShareRefusal | null = null;
 
   function clear() {
     generation += 1;
@@ -71,6 +78,17 @@ export function installScreenSharePicker(
       current.host === page.host &&
       current.pathname === page.pathname
     );
+  }
+
+  function refusalFor(frame: WebFrameMain | null): ScreenShareRefusal {
+    return config.get('mediaPermissions') || !frame ? 'not-allowed' : 'no-permission';
+  }
+
+  function decline(reason: ScreenShareRefusal | null) {
+    refusal = reason;
+    if (reason) {
+      console.warn('screen share: declined:', reason);
+    }
   }
 
   const { screenAccess } = system;
@@ -126,16 +144,31 @@ export function installScreenSharePicker(
   );
 
   contents.ipc.handle('set-screen-share-source', (event, id: string | null) => {
+    refusal = null;
     if (portal || !allowed(event.senderFrame)) {
+      if (id !== null) {
+        decline(refusalFor(event.senderFrame));
+      }
       return false;
     }
     const source = choices.find(item => item.id === id);
     clear();
     if (!source) {
+      // null is the picker being closed without a choice
+      if (id !== null) {
+        decline('no-selection');
+      }
       return false;
     }
     selection = { source, expires: Date.now() + 5000 };
     return true;
+  });
+
+  // read once: a later share starts with no reason recorded
+  contents.ipc.handle('take-screen-share-refusal', event => {
+    const reason = refusal;
+    refusal = null;
+    return allowed(event.senderFrame) ? reason : null;
   });
 
   contents.ipc.handle('open-screen-recording-settings', async event => {
@@ -161,18 +194,27 @@ export function installScreenSharePicker(
       // what a cancel in the portal's dialog looks like: the user chose not to share
       console.info('screen share: the portal returned no source:', e?.message);
     }
-    respond(source && allowed(frame) ? { video: source } : null);
+    if (!source) {
+      respond(null);
+    } else if (!allowed(frame)) {
+      decline(refusalFor(frame));
+      respond(null);
+    } else {
+      respond({ video: source });
+    }
   }
 
   session.setDisplayMediaRequestHandler((request, callback) => {
     // Electron 40 accepts null to decline a request. Its declaration only lists Streams.
     const respond = callback as (streams: Electron.Streams | null) => void;
-    if (
-      !allowed(request.frame) ||
-      !request.userGesture ||
-      !request.videoRequested ||
-      request.audioRequested
-    ) {
+    refusal = null;
+    if (!allowed(request.frame) || !request.videoRequested || request.audioRequested) {
+      decline(refusalFor(request.frame));
+      respond(null);
+      return;
+    }
+    if (!request.userGesture) {
+      decline('no-user-gesture');
       respond(null);
       return;
     }
@@ -183,11 +225,14 @@ export function installScreenSharePicker(
     }
     const picked = selection;
     clear();
-    respond(
-      picked && picked.expires >= Date.now() && screenAccess() === 'granted'
-        ? { video: picked.source }
-        : null
-    );
+    if (!picked) {
+      decline('no-selection');
+    } else if (picked.expires < Date.now()) {
+      decline('expired');
+    } else if (screenAccess() !== 'granted') {
+      decline('no-access');
+    }
+    respond(refusal || !picked ? null : { video: picked.source });
   });
 
   contents.on('did-start-navigation', details => {
